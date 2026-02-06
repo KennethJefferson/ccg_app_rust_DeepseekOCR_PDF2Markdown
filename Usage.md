@@ -65,8 +65,10 @@ deepseek-ocr-pdf2md -i ./docs -r --api-url https://abc123-8000.proxy.runpod.net
 ### On Runpod
 
 1. Create a GPU pod (RTX 3090 / A5000 / A6000 with 24GB+ VRAM)
-2. Upload the `server/` directory to `/workspace/deepseek-ocr-server/`
-3. Run the startup script:
+2. Set **Volume Mount Path** to `/workspace` for persistent storage
+3. Expose **TCP port 8000** in the pod config for direct API access
+4. Upload the `server/` directory to `/workspace/deepseek-ocr-server/`
+5. Run the startup script:
 
 ```bash
 cd /workspace/deepseek-ocr-server
@@ -74,8 +76,8 @@ chmod +x start.sh
 ./start.sh
 ```
 
-4. The first run downloads the model (~6GB). Subsequent starts use the cached model.
-5. The server listens on port 8000. Use the Runpod proxy URL for external access.
+6. First run creates a venv at `/workspace/venv/`, installs deps, and downloads the model to `/workspace/models/DeepSeek-OCR-2/` (~6GB). Subsequent starts skip these steps.
+7. The server listens on port 8000. Use the direct TCP port (e.g., `213.192.x.x:40016`) for fastest access, or the Runpod proxy URL.
 
 ### Health Check
 
@@ -114,6 +116,18 @@ Set the log level via the `RUST_LOG` environment variable:
 RUST_LOG=debug deepseek-ocr-pdf2md -i ./docs --api-url ...
 ```
 
+## Performance
+
+Current inference speed on RTX 3090: **~8 pages/minute** (~7.5s per page). This is bounded by autoregressive text generation in the vision-language model.
+
+| Document Size | Approximate Time |
+|---------------|-----------------|
+| 10 pages | ~1.3 min |
+| 100 pages | ~12.5 min |
+| 500 pages | ~62 min |
+
+The `research/` directory in the repo contains detailed performance analysis and optimization paths (vLLM, quantization, alternative models).
+
 ## Troubleshooting
 
 | Issue | Solution |
@@ -122,3 +136,5 @@ RUST_LOG=debug deepseek-ocr-pdf2md -i ./docs --api-url ...
 | `Request timed out after 300s` | Large PDFs may exceed the 5-minute timeout. The tool retries up to 3 times automatically. |
 | `GPU out of memory` | Server returns partial results for completed pages. Reduce PDF page size or restart the server pod. |
 | `0 PDFs found` | Check input directory path and ensure PDFs have `.pdf` extension. Use `-r` for nested directories. |
+| Server won't start after crash | GPU memory may be held by zombie processes. Restart the Runpod pod to clear VRAM. |
+| Stale code after SCP update | Delete `app/__pycache__/` and restart uvicorn. |

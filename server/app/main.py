@@ -1,5 +1,6 @@
 import logging
 import shutil
+import time
 from contextlib import asynccontextmanager
 
 import torch
@@ -29,9 +30,15 @@ async def convert(file: UploadFile = File(...)):
         temp_dir, image_paths = pdf_to_images(pdf_bytes)
 
         markdown_parts: list[str] = []
+        page_times: list[float] = []
+        total_start = time.monotonic()
         for i, img_path in enumerate(image_paths):
             try:
+                page_start = time.monotonic()
                 md = await model.infer(img_path)
+                elapsed = time.monotonic() - page_start
+                page_times.append(elapsed)
+                print(f"[TIMING] Page {i + 1}/{len(image_paths)}: {elapsed:.2f}s", flush=True)
                 markdown_parts.append(md)
             except torch.cuda.OutOfMemoryError:
                 logger.error("OOM on page %d, returning partial results", i)
@@ -42,6 +49,13 @@ async def convert(file: UploadFile = File(...)):
                     error=f"GPU out of memory on page {i + 1}. {len(markdown_parts)}/{len(image_paths)} pages processed.",
                 )
 
+        total_elapsed = time.monotonic() - total_start
+        avg = sum(page_times) / len(page_times) if page_times else 0
+        print(
+            f"[TIMING] Done: {len(markdown_parts)} pages in {total_elapsed:.1f}s "
+            f"(avg {avg:.2f}s/page, {60 / avg if avg > 0 else 0:.1f} pages/min)",
+            flush=True,
+        )
         return ConvertResponse(
             success=True,
             markdown="\n\n---\n\n".join(markdown_parts),

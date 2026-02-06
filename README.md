@@ -1,6 +1,6 @@
 # DeepSeek-OCR PDF2Markdown
 
-A Rust-based CLI tool with a live TUI dashboard that batch-converts PDF documents to Markdown using the DeepSeek-OCR-2-3B vision model running on a GPU server.
+A Rust-based CLI tool with a live TUI dashboard that batch-converts PDF documents to Markdown using the DeepSeek-OCR-2 vision-language model (3B params) running on a GPU server.
 
 ## How It Works
 
@@ -19,7 +19,7 @@ PDF files on disk                          Runpod GPU Server
 
 1. **Scanner** walks input directories for `.pdf` files, skipping any with existing `.md` output
 2. **Workers** (configurable count) pull PDFs from a channel and upload them to the API server
-3. **Server** converts each PDF page to a 144 DPI image, runs DeepSeek-OCR inference, and returns combined Markdown
+3. **Server** converts each PDF page to a PNG image, runs DeepSeek-OCR-2 inference per page, and returns combined Markdown
 4. **TUI** displays real-time worker status, progress bar, file results, and statistics
 
 ## Requirements
@@ -134,6 +134,10 @@ deepseek-ocr-pdf2md -i ./docs -r -w 3 -o ./markdown_output --api-url https://<po
 - **Auto-rename on collision**: When using `-o`, duplicate filenames get `_1`, `_2` suffixes.
 - **Two-stage shutdown**: First Ctrl+C finishes current work gracefully; second forces immediate exit.
 - **Retry with backoff**: Failed API calls retry up to 3 times with exponential backoff (1s, 2s, 4s).
+
+## Performance Notes
+
+Current inference speed on RTX 3090 is ~7.5 seconds per page (limited by autoregressive text generation). The `research/` directory contains detailed analysis of the bottleneck and comparisons with alternative OCR tools (Marker, MinerU, Docling, etc.). Optimization paths under investigation include vLLM serving, INT4 quantization, and alternative OCR architectures.
 
 ## License
 

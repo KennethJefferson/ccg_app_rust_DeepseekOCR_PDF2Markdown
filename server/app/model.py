@@ -1,6 +1,7 @@
 import asyncio
 import functools
 import logging
+import tempfile
 from typing import Optional
 
 import torch
@@ -8,7 +9,7 @@ from transformers import AutoModel, AutoTokenizer
 
 logger = logging.getLogger(__name__)
 
-MODEL_NAME = "deepseek-ai/DeepSeek-OCR-2"
+MODEL_NAME = "/workspace/models/DeepSeek-OCR-2"
 PROMPT = "<image>\n<|grounding|>Convert the document to markdown."
 
 _model: Optional[AutoModel] = None
@@ -34,26 +35,28 @@ def load_model() -> None:
         trust_remote_code=True,
         _attn_implementation="flash_attention_2",
         use_safetensors=True,
+        torch_dtype=torch.bfloat16,
     )
-    _model = model.eval().cuda().to(torch.bfloat16)
+    _model = model.eval().cuda()
     logger.info("Model loaded successfully")
 
 
 def _infer_sync(image_path: str) -> str:
     assert _model is not None and _tokenizer is not None, "Model not loaded"
 
-    with torch.inference_mode():
-        result = _model.infer(
-            _tokenizer,
-            prompt=PROMPT,
-            image_file=image_path,
-            output_path="",
-            base_size=1024,
-            image_size=768,
-            crop_mode=True,
-            save_results=False,
-            eval_mode=True,
-        )
+    with tempfile.TemporaryDirectory(prefix="ocr_out_") as tmp_dir:
+        with torch.inference_mode():
+            result = _model.infer(
+                _tokenizer,
+                prompt=PROMPT,
+                image_file=image_path,
+                output_path=tmp_dir,
+                base_size=1024,
+                image_size=768,
+                crop_mode=True,
+                save_results=False,
+                eval_mode=True,
+            )
 
     return result if isinstance(result, str) else str(result)
 
