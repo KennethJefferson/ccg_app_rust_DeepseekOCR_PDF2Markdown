@@ -1,12 +1,12 @@
 # CLAUDE.md - Project Instructions for Claude Code
 
 ## Project Overview
-DeepSeek-OCR PDF2Markdown: A Rust CLI client with TUI dashboard that sends PDFs to a Python FastAPI server running the DeepSeek-OCR-2 model on GPU, returning converted Markdown.
+PDF2Markdown: A Rust CLI client with TUI dashboard that sends PDFs to a Python FastAPI server running Marker for OCR, returning converted Markdown.
 
 ## Architecture
 - **Client** (`src/`): Rust + tokio async runtime, ratatui TUI, reqwest HTTP client
-- **Server** (`server/`): Python FastAPI, PyMuPDF for PDF rendering, DeepSeek-OCR-2 (3B params) for inference
-- **Deployment**: Runpod GPU pod (RTX 3090), persistent storage at `/workspace/` (venv, model, server code)
+- **Server** (`server/`): Python FastAPI, Marker (marker-pdf) for PDF-to-Markdown conversion
+- **Deployment**: Runpod GPU pod (RTX 3090), persistent storage at `/workspace/` (venv, HF cache, server code)
 
 ## Build & Test
 ```bash
@@ -48,8 +48,7 @@ src/
     widgets.rs    - Worker rows, file lines, spinner, formatting
 server/
   app/main.py     - FastAPI endpoints (/convert, /health)
-  app/model.py    - Model loading + async inference wrapper
-  app/pdf_pipeline.py - PDF-to-PNG via PyMuPDF
+  app/model.py    - Marker PdfConverter loading + async conversion wrapper
   app/schemas.py  - Pydantic response models
 ```
 
@@ -60,20 +59,19 @@ server/
 
 ## Server Deployment (Runpod)
 - All deps installed to `/workspace/venv/` (persistent across pod restarts)
-- Model cached at `/workspace/models/DeepSeek-OCR-2/` (~6GB)
+- Marker/surya models cached at `/workspace/datalab_cache/` (~3.3GB, symlinked from `/root/.cache/datalab`)
 - Server code at `/workspace/deepseek-ocr-server/`
-- `start.sh` is idempotent: skips install/download if already present
+- `start.sh` is idempotent: skips install if marker-pdf already in venv
 - Always expose TCP port 8000 for direct API access (faster than proxy)
 - When killing uvicorn, use `kill -9 <PID>` by exact PID; `pkill -f uvicorn` kills SSH sessions too
 - After killing, verify GPU memory freed with `nvidia-smi`; zombie VRAM requires pod restart
 
-## Model API (DeepSeek-OCR-2)
-- Uses `AutoModel` (NOT `AutoModelForCausalLM`) with `trust_remote_code=True`
-- Built-in `model.infer()` method; do NOT use `apply_chat_template`/`generate()` directly
-- Key params: `_attn_implementation="flash_attention_2"`, `torch_dtype=torch.bfloat16`
-- `crop_mode=True` with images >768px on either dimension triggers dynamic cropping (up to 6 crops)
-- Performance bottleneck is autoregressive text generation (~7ms/token, ~1000 tokens/page)
-- See `research/` folder for optimization analysis and alternative OCR tool comparisons
+## Model API (Marker)
+- Uses `PdfConverter` from `marker.converters.pdf` with `create_model_dict()` from `marker.models`
+- Converter takes a file path, returns rendered output; extract text with `text_from_rendered()`
+- Page count from `rendered.metadata["page_stats"]`
+- Marker handles PDF rendering internally (no separate PyMuPDF step)
+- GPL-3.0 license (server-only, private deployment, no impact on MIT Rust client)
 
 ## Common Pitfalls
 - `time` crate v0.3.47+ requires Rust 1.88+; do not downgrade toolchain
@@ -82,4 +80,3 @@ server/
 - `ScanResult` needs `#[derive(Debug)]` for test assertions with `unwrap_err()`
 - Use `#[allow(dead_code)]` on enums with Debug derive when fields are consumed via pattern matching
 - Server `__pycache__` can serve stale code after SCP updates; always `rm -rf __pycache__` before restart
-- `model.infer()` calls `os.makedirs(output_path)` unconditionally; use `tempfile.TemporaryDirectory`

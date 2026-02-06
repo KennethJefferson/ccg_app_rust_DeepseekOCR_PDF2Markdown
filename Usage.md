@@ -11,7 +11,7 @@ deepseek-ocr-pdf2md [OPTIONS] --input <DIR>... --api-url <URL>
 | Argument | Description |
 |----------|-------------|
 | `-i, --input <DIR>...` | One or more input directories containing PDF files |
-| `--api-url <URL>` | DeepSeek-OCR server URL (e.g., `https://<pod-id>-8000.proxy.runpod.net`) |
+| `--api-url <URL>` | Server URL (e.g., `http://<ip>:<port>` or `https://<pod-id>-8000.proxy.runpod.net`) |
 
 ### Optional Arguments
 
@@ -76,7 +76,7 @@ chmod +x start.sh
 ./start.sh
 ```
 
-6. First run creates a venv at `/workspace/venv/`, installs deps, and downloads the model to `/workspace/models/DeepSeek-OCR-2/` (~6GB). Subsequent starts skip these steps.
+6. First run creates a venv at `/workspace/venv/`, installs deps, and downloads Marker models to `/root/.cache/datalab/` (~3.3GB). Subsequent starts skip these steps. For persistence across pod restarts, symlink the cache to `/workspace/`: `mv /root/.cache/datalab /workspace/datalab_cache && ln -s /workspace/datalab_cache /root/.cache/datalab`
 7. The server listens on port 8000. Use the direct TCP port (e.g., `213.192.x.x:40016`) for fastest access, or the Runpod proxy URL.
 
 ### Health Check
@@ -118,15 +118,13 @@ RUST_LOG=debug deepseek-ocr-pdf2md -i ./docs --api-url ...
 
 ## Performance
 
-Current inference speed on RTX 3090: **~8 pages/minute** (~7.5s per page). This is bounded by autoregressive text generation in the vision-language model.
+Using Marker on RTX 3090: **~150 pages/minute** (~0.4-0.5s per page).
 
 | Document Size | Approximate Time |
 |---------------|-----------------|
-| 10 pages | ~1.3 min |
-| 100 pages | ~12.5 min |
-| 500 pages | ~62 min |
-
-The `research/` directory in the repo contains detailed performance analysis and optimization paths (vLLM, quantization, alternative models).
+| 10 pages | ~5s |
+| 100 pages | ~45s |
+| 500 pages | ~4 min |
 
 ## Troubleshooting
 
@@ -134,7 +132,7 @@ The `research/` directory in the repo contains detailed performance analysis and
 |-------|----------|
 | `Cannot reach API server` | Check server is running and URL is correct. Run health check with curl. |
 | `Request timed out after 300s` | Large PDFs may exceed the 5-minute timeout. The tool retries up to 3 times automatically. |
-| `GPU out of memory` | Server returns partial results for completed pages. Reduce PDF page size or restart the server pod. |
+| `GPU out of memory` | Restart the server pod to clear VRAM. |
 | `0 PDFs found` | Check input directory path and ensure PDFs have `.pdf` extension. Use `-r` for nested directories. |
 | Server won't start after crash | GPU memory may be held by zombie processes. Restart the Runpod pod to clear VRAM. |
 | Stale code after SCP update | Delete `app/__pycache__/` and restart uvicorn. |

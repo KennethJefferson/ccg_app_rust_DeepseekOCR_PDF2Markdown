@@ -1,12 +1,4 @@
-torch==2.6.0
-transformers==4.46.3
-flash-attn==2.7.3
+marker-pdf
 fastapi
 uvicorn[standard]
 python-multipart
-PyMuPDF
-einops
-easydict
-addict
-Pillow
-numpy

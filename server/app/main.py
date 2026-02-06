@@ -1,5 +1,6 @@
 import logging
-import shutil
+import os
+import tempfile
 import time
 from contextlib import asynccontextmanager
 
@@ -7,7 +8,6 @@ import torch
 from fastapi import FastAPI, UploadFile, File
 
 from app import model
-from app.pdf_pipeline import pdf_to_images
 from app.schemas import ConvertResponse, HealthResponse
 
 logger = logging.getLogger(__name__)
@@ -24,52 +24,37 @@ app = FastAPI(title="DeepSeek OCR Server", lifespan=lifespan)
 
 @app.post("/convert", response_model=ConvertResponse)
 async def convert(file: UploadFile = File(...)):
-    temp_dir = None
+    tmp_path = None
     try:
         pdf_bytes = await file.read()
-        temp_dir, image_paths = pdf_to_images(pdf_bytes)
+        fd, tmp_path = tempfile.mkstemp(suffix=".pdf", prefix="marker_")
+        os.write(fd, pdf_bytes)
+        os.close(fd)
 
-        markdown_parts: list[str] = []
-        page_times: list[float] = []
-        total_start = time.monotonic()
-        for i, img_path in enumerate(image_paths):
-            try:
-                page_start = time.monotonic()
-                md = await model.infer(img_path)
-                elapsed = time.monotonic() - page_start
-                page_times.append(elapsed)
-                print(f"[TIMING] Page {i + 1}/{len(image_paths)}: {elapsed:.2f}s", flush=True)
-                markdown_parts.append(md)
-            except torch.cuda.OutOfMemoryError:
-                logger.error("OOM on page %d, returning partial results", i)
-                return ConvertResponse(
-                    success=False,
-                    markdown="\n\n---\n\n".join(markdown_parts),
-                    pages_processed=len(markdown_parts),
-                    error=f"GPU out of memory on page {i + 1}. {len(markdown_parts)}/{len(image_paths)} pages processed.",
-                )
+        start = time.monotonic()
+        markdown, pages = await model.convert(tmp_path)
+        elapsed = time.monotonic() - start
 
-        total_elapsed = time.monotonic() - total_start
-        avg = sum(page_times) / len(page_times) if page_times else 0
-        print(
-            f"[TIMING] Done: {len(markdown_parts)} pages in {total_elapsed:.1f}s "
-            f"(avg {avg:.2f}s/page, {60 / avg if avg > 0 else 0:.1f} pages/min)",
-            flush=True,
-        )
+        if pages > 0:
+            print(
+                f"[TIMING] {pages} pages in {elapsed:.1f}s "
+                f"(avg {elapsed / pages:.2f}s/page)",
+                flush=True,
+            )
+        else:
+            print(f"[TIMING] 0 pages in {elapsed:.1f}s", flush=True)
+
         return ConvertResponse(
             success=True,
-            markdown="\n\n---\n\n".join(markdown_parts),
-            pages_processed=len(markdown_parts),
+            markdown=markdown,
+            pages_processed=pages,
         )
     except Exception as e:
         logger.exception("Conversion failed")
-        return ConvertResponse(
-            success=False,
-            error=str(e),
-        )
+        return ConvertResponse(success=False, error=str(e))
     finally:
-        if temp_dir is not None:
-            shutil.rmtree(temp_dir, ignore_errors=True)
+        if tmp_path and os.path.exists(tmp_path):
+            os.unlink(tmp_path)
 
 
 @app.get("/health", response_model=HealthResponse)

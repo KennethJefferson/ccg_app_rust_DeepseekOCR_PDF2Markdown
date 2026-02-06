@@ -1,6 +1,6 @@
-# DeepSeek-OCR PDF2Markdown
+# PDF2Markdown
 
-A Rust-based CLI tool with a live TUI dashboard that batch-converts PDF documents to Markdown using the DeepSeek-OCR-2 vision-language model (3B params) running on a GPU server.
+A Rust-based CLI tool with a live TUI dashboard that batch-converts PDF documents to Markdown using [Marker](https://github.com/datalab-to/marker) running on a GPU server.
 
 ## How It Works
 
@@ -9,7 +9,7 @@ PDF files on disk                          Runpod GPU Server
      |                                          |
      v                                          v
  [Scanner] --> [Work Queue] --> [Workers] --> [FastAPI]
-                                    |         PDF -> images -> OCR model
+                                    |         PDF -> Marker -> Markdown
                                     v              |
                                [TUI Dashboard]     v
                                     |          Markdown response
@@ -19,7 +19,7 @@ PDF files on disk                          Runpod GPU Server
 
 1. **Scanner** walks input directories for `.pdf` files, skipping any with existing `.md` output
 2. **Workers** (configurable count) pull PDFs from a channel and upload them to the API server
-3. **Server** converts each PDF page to a PNG image, runs DeepSeek-OCR-2 inference per page, and returns combined Markdown
+3. **Server** converts the entire PDF via Marker and returns Markdown
 4. **TUI** displays real-time worker status, progress bar, file results, and statistics
 
 ## Requirements
@@ -43,7 +43,7 @@ chmod +x start.sh
 ./start.sh
 ```
 
-This installs dependencies, downloads the model (~6GB), and starts the API on port 8000.
+This installs dependencies, downloads Marker models (~3.3GB on first run), and starts the API on port 8000.
 
 ### 2. Build the Client
 
@@ -119,8 +119,7 @@ deepseek-ocr-pdf2md -i ./docs -r -w 3 -o ./markdown_output --api-url https://<po
 └── server/
     ├── app/
     │   ├── main.py       # FastAPI application
-    │   ├── model.py      # Model loading + inference
-    │   ├── pdf_pipeline.py  # PDF to image conversion
+    │   ├── model.py      # Marker PdfConverter loading + conversion
     │   └── schemas.py    # Response models
     ├── requirements.txt
     └── start.sh          # Server startup script
@@ -129,15 +128,21 @@ deepseek-ocr-pdf2md -i ./docs -r -w 3 -o ./markdown_output --api-url https://<po
 ## Design Decisions
 
 - **No shared mutable state**: Workers send events through channels. The main loop is the sole owner of `AppState`.
-- **GPU Semaphore(1)**: Only one inference runs at a time on the server to prevent OOM.
+- **Whole-PDF conversion**: Marker processes entire PDFs at once (no per-page loop).
 - **Pre-existence check**: Already-converted PDFs are skipped before queuing.
 - **Auto-rename on collision**: When using `-o`, duplicate filenames get `_1`, `_2` suffixes.
 - **Two-stage shutdown**: First Ctrl+C finishes current work gracefully; second forces immediate exit.
 - **Retry with backoff**: Failed API calls retry up to 3 times with exponential backoff (1s, 2s, 4s).
 
-## Performance Notes
+## Performance
 
-Current inference speed on RTX 3090 is ~7.5 seconds per page (limited by autoregressive text generation). The `research/` directory contains detailed analysis of the bottleneck and comparisons with alternative OCR tools (Marker, MinerU, Docling, etc.). Optimization paths under investigation include vLLM serving, INT4 quantization, and alternative OCR architectures.
+Using Marker on RTX 3090: **~0.4-0.5s per page** (~150 pages/minute). A 224-page book converts in ~90 seconds.
+
+| Document Size | Approximate Time |
+|---------------|-----------------|
+| 10 pages | ~5s |
+| 100 pages | ~45s |
+| 500 pages | ~4 min |
 
 ## License
 

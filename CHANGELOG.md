@@ -5,6 +5,23 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.0] - 2026-02-06
+
+### Changed
+- **Replaced DeepSeek-OCR-2 with Marker** (marker-pdf) as the OCR engine on the server
+- ~18x speedup: from ~7.5s/page to ~0.4s/page on RTX 3090 (224-page book in 90s)
+- Server now processes entire PDFs in a single call instead of per-page image inference
+- Removed `pdf_pipeline.py` (PyMuPDF) -- Marker handles PDF rendering internally
+- Simplified `requirements.txt` from 12 deps to 4 (marker-pdf pulls transitive deps)
+- `start.sh` detects stale venv and recreates; symlinks datalab model cache to persistent storage
+- API contract unchanged: Rust client works without modification
+
+### Removed
+- DeepSeek-OCR-2 model dependency (~6GB), replaced by Marker models (~3.3GB)
+- PyMuPDF PDF-to-PNG pipeline
+- Per-page OOM handling (Marker processes whole PDFs atomically)
+- GPU semaphore (no longer needed with single whole-PDF calls)
+
 ## [0.1.1] - 2026-02-06
 
 ### Fixed

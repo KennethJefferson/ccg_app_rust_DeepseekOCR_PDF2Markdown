@@ -1,73 +1,40 @@
 import asyncio
 import functools
 import logging
-import tempfile
 from typing import Optional
 
 import torch
-from transformers import AutoModel, AutoTokenizer
+from marker.converters.pdf import PdfConverter
+from marker.models import create_model_dict
+from marker.output import text_from_rendered
 
 logger = logging.getLogger(__name__)
 
-MODEL_NAME = "/workspace/models/DeepSeek-OCR-2"
-PROMPT = "<image>\n<|grounding|>Convert the document to markdown."
-
-_model: Optional[AutoModel] = None
-_tokenizer: Optional[AutoTokenizer] = None
-_semaphore = asyncio.Semaphore(1)
+_converter: Optional[PdfConverter] = None
 
 
 def is_loaded() -> bool:
-    return _model is not None and _tokenizer is not None
+    return _converter is not None
 
 
 def load_model() -> None:
-    global _model, _tokenizer
+    global _converter
+    logger.info("Loading Marker models...")
+    models = create_model_dict()
+    _converter = PdfConverter(artifact_dict=models)
+    logger.info("Marker models loaded successfully")
 
-    logger.info("Loading tokenizer from %s", MODEL_NAME)
-    _tokenizer = AutoTokenizer.from_pretrained(
-        MODEL_NAME, trust_remote_code=True
+
+def _convert_sync(pdf_path: str) -> tuple[str, int]:
+    assert _converter is not None, "Model not loaded"
+    rendered = _converter(pdf_path)
+    text, _, _ = text_from_rendered(rendered)
+    page_count = len(rendered.metadata.get("page_stats", []))
+    return text, page_count
+
+
+async def convert(pdf_path: str) -> tuple[str, int]:
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(
+        None, functools.partial(_convert_sync, pdf_path)
     )
-
-    logger.info("Loading model from %s", MODEL_NAME)
-    model = AutoModel.from_pretrained(
-        MODEL_NAME,
-        trust_remote_code=True,
-        _attn_implementation="flash_attention_2",
-        use_safetensors=True,
-        torch_dtype=torch.bfloat16,
-    )
-    _model = model.eval().cuda()
-    logger.info("Model loaded successfully")
-
-
-def _infer_sync(image_path: str) -> str:
-    assert _model is not None and _tokenizer is not None, "Model not loaded"
-
-    with tempfile.TemporaryDirectory(prefix="ocr_out_") as tmp_dir:
-        with torch.inference_mode():
-            result = _model.infer(
-                _tokenizer,
-                prompt=PROMPT,
-                image_file=image_path,
-                output_path=tmp_dir,
-                base_size=1024,
-                image_size=768,
-                crop_mode=True,
-                save_results=False,
-                eval_mode=True,
-            )
-
-    return result if isinstance(result, str) else str(result)
-
-
-async def infer(image_path: str) -> str:
-    async with _semaphore:
-        loop = asyncio.get_running_loop()
-        try:
-            return await loop.run_in_executor(
-                None, functools.partial(_infer_sync, image_path)
-            )
-        except torch.cuda.OutOfMemoryError:
-            torch.cuda.empty_cache()
-            raise
