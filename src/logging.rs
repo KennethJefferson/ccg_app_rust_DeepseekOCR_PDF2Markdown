@@ -4,10 +4,10 @@ use tracing_appender::rolling;
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
 pub fn init_logging(log_dir: &Path, tui_active: bool) {
-    let file_appender = rolling::daily(log_dir, "deepseek-ocr.log");
+    let file_appender = rolling::daily(log_dir, "pdf2md.log");
 
     let env_filter = EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| EnvFilter::new("deepseek_ocr_pdf2md=info"));
+        .unwrap_or_else(|_| EnvFilter::new("pdf2md=info"));
 
     if tui_active {
         // File-only logging when TUI is active

@@ -1,8 +1,8 @@
 [package]
-name = "deepseek-ocr-pdf2md"
-version = "0.1.0"
+name = "pdf2md"
+version = "0.3.0"
 edition = "2021"
-description = "CLI tool to convert PDFs to Markdown using DeepSeek-OCR"
+description = "CLI tool to convert PDFs to Markdown via Marker OCR"
 
 [dependencies]
 clap = { version = "4.5", features = ["derive"] }

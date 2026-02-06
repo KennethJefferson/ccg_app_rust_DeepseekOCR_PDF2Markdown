@@ -62,7 +62,7 @@ server/
 ## Server Deployment (Runpod)
 - All deps installed to `/workspace/venv/` (persistent across pod restarts)
 - Marker/surya models cached at `/workspace/datalab_cache/` (~3.3GB, symlinked from `/root/.cache/datalab`)
-- Server code at `/workspace/deepseek-ocr-server/`
+- Server code at `/workspace/pdf2md-server/`
 - `start.sh` is idempotent: skips install if marker-pdf already in venv
 - Always expose TCP port 8000 for direct API access (faster than proxy)
 - When killing uvicorn, use `kill -9 <PID>` by exact PID; `pkill -f uvicorn` kills SSH sessions too

@@ -3,7 +3,7 @@
 ## CLI Reference
 
 ```
-deepseek-ocr-pdf2md [OPTIONS] --input <DIR>... --api-url <URL>
+pdf2md [OPTIONS] --input <DIR>... --api-url <URL>
 ```
 
 ### Required Arguments
@@ -26,7 +26,7 @@ deepseek-ocr-pdf2md [OPTIONS] --input <DIR>... --api-url <URL>
 ### Basic: Convert PDFs in a single directory
 
 ```bash
-deepseek-ocr-pdf2md -i ./pdfs --api-url https://abc123-8000.proxy.runpod.net
+pdf2md -i ./pdfs --api-url https://abc123-8000.proxy.runpod.net
 ```
 
 Output `.md` files are written next to each source PDF.
@@ -34,13 +34,13 @@ Output `.md` files are written next to each source PDF.
 ### Recursive scan with multiple input directories
 
 ```bash
-deepseek-ocr-pdf2md -i ./reports ./invoices -r --api-url https://abc123-8000.proxy.runpod.net
+pdf2md -i ./reports ./invoices -r --api-url https://abc123-8000.proxy.runpod.net
 ```
 
 ### Flat output directory with parallel workers
 
 ```bash
-deepseek-ocr-pdf2md -i ./documents -r -o ./markdown -w 4 --api-url https://abc123-8000.proxy.runpod.net
+pdf2md -i ./documents -r -o ./markdown -w 4 --api-url https://abc123-8000.proxy.runpod.net
 ```
 
 All output goes into `./markdown/`. If multiple PDFs share the same filename stem, they are auto-renamed:
@@ -54,10 +54,10 @@ The tool automatically checks if the target `.md` file exists before queuing a P
 
 ```bash
 # First run: converts 50 PDFs
-deepseek-ocr-pdf2md -i ./docs -r --api-url https://abc123-8000.proxy.runpod.net
+pdf2md -i ./docs -r --api-url https://abc123-8000.proxy.runpod.net
 
 # Second run: skips the 50 already-converted, only processes new ones
-deepseek-ocr-pdf2md -i ./docs -r --api-url https://abc123-8000.proxy.runpod.net
+pdf2md -i ./docs -r --api-url https://abc123-8000.proxy.runpod.net
 ```
 
 ## Server Deployment
@@ -67,11 +67,11 @@ deepseek-ocr-pdf2md -i ./docs -r --api-url https://abc123-8000.proxy.runpod.net
 1. Create a GPU pod (RTX 3090 / A5000 / A6000 with 24GB+ VRAM)
 2. Set **Volume Mount Path** to `/workspace` for persistent storage
 3. Expose **TCP port 8000** in the pod config for direct API access
-4. Upload the `server/` directory to `/workspace/deepseek-ocr-server/`
+4. Upload the `server/` directory to `/workspace/pdf2md-server/`
 5. Run the startup script:
 
 ```bash
-cd /workspace/deepseek-ocr-server
+cd /workspace/pdf2md-server
 chmod +x start.sh
 ./start.sh
 ```
@@ -119,13 +119,13 @@ The terminal is always restored to its normal state on exit, even if the program
 When the TUI is active, logs are written to a daily rolling file in the output directory (or current directory if no `-o` specified):
 
 ```
-deepseek-ocr.log.2026-02-05
+pdf2md.log.2026-02-05
 ```
 
 Set the log level via the `RUST_LOG` environment variable:
 
 ```bash
-RUST_LOG=debug deepseek-ocr-pdf2md -i ./docs --api-url ...
+RUST_LOG=debug pdf2md -i ./docs --api-url ...
 ```
 
 ## Performance

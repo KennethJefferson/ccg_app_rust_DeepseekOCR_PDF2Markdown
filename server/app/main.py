@@ -21,7 +21,7 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="DeepSeek OCR Server", lifespan=lifespan)
+app = FastAPI(title="PDF2Markdown Server", lifespan=lifespan)
 
 
 @app.post("/convert", response_model=ConvertResponse)

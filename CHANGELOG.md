@@ -14,11 +14,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `pool_size` field in `/health` response
 
 ### Changed
+- **Renamed project from `deepseek-ocr-pdf2md` to `pdf2md`** — binary, package, logs, server paths, all docs updated
 - Client `--workers` default changed from 1 to 2
 - Client `--workers` capped at 4 with clap range validation (`u8`, 1-4)
 - Removed manual workers-must-be-nonzero check (clap enforces range at parse time)
 - All model instances share one `create_model_dict()` call for weight reuse
 - Uvicorn stays at `--workers 1`; concurrency handled by in-process model pool (shared CUDA context)
+- Server path changed from `/workspace/deepseek-ocr-server/` to `/workspace/pdf2md-server/`
 
 ## [0.2.0] - 2026-02-06
 

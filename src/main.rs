@@ -35,7 +35,7 @@ async fn main() -> anyhow::Result<()> {
         output = ?cli.output,
         workers = cli.workers,
         api_url = %cli.api_url,
-        "Starting DeepSeek OCR"
+        "Starting PDF2Markdown"
     );
 
     let num_workers = cli.workers as usize;

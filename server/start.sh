@@ -2,7 +2,7 @@
 set -e
 
 VENV=/workspace/venv
-SERVER=/workspace/deepseek-ocr-server
+SERVER=/workspace/pdf2md-server
 export HF_HOME=/workspace/hf_cache
 
 # Ensure datalab/surya model cache symlinks to persistent storage

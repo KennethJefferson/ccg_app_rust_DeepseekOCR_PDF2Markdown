@@ -55,16 +55,16 @@ cargo build --release
 
 ```bash
 # Convert all PDFs in a directory
-deepseek-ocr-pdf2md -i ./documents --api-url https://<pod-id>-8000.proxy.runpod.net
+pdf2md -i ./documents --api-url https://<pod-id>-8000.proxy.runpod.net
 
 # Recursive scan with 4 parallel workers, output to a flat directory
-deepseek-ocr-pdf2md -i ./docs -r -w 4 -o ./markdown_output --api-url https://<pod-id>-8000.proxy.runpod.net
+pdf2md -i ./docs -r -w 4 -o ./markdown_output --api-url https://<pod-id>-8000.proxy.runpod.net
 ```
 
 ## TUI Dashboard
 
 ```
-+-- DeepSeek OCR - PDF to Markdown ----------- [Ctrl+C to stop] --+
++-- PDF to Markdown ----------------------- [Ctrl+C to stop] --+
 |                                                                   |
 | Workers                                                           |
 |  # Worker 0: report.pdf                            (12s)          |

@@ -24,7 +24,7 @@ pub fn render(frame: &mut Frame, state: &AppState, tick: usize) {
         .border_style(Style::default().fg(GREEN))
         .title(Line::from(vec![
             Span::styled(
-                " DeepSeek OCR - PDF to Markdown ",
+                " PDF to Markdown ",
                 Style::default()
                     .fg(GREEN)
                     .add_modifier(Modifier::BOLD),
