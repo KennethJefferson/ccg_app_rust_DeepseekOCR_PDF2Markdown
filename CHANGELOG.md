@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-02-06
+
+### Added
+- Server-side model pool: N Marker `PdfConverter` instances managed via `asyncio.Queue` + `ThreadPoolExecutor` for parallel GPU inference
+- `MARKER_POOL_SIZE` env var to configure instance count (default 4)
+- VRAM usage logging at server startup for capacity tuning
+- `pool_size` field in `/health` response
+
+### Changed
+- Client `--workers` default changed from 1 to 2
+- Client `--workers` capped at 4 with clap range validation (`u8`, 1-4)
+- Removed manual workers-must-be-nonzero check (clap enforces range at parse time)
+- All model instances share one `create_model_dict()` call for weight reuse
+- Uvicorn stays at `--workers 1`; concurrency handled by in-process model pool (shared CUDA context)
+
 ## [0.2.0] - 2026-02-06
 
 ### Changed

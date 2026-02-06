@@ -38,10 +38,7 @@ async fn main() -> anyhow::Result<()> {
         "Starting DeepSeek OCR"
     );
 
-    // Validate workers count
-    if cli.workers == 0 {
-        anyhow::bail!("Workers must be at least 1");
-    }
+    let num_workers = cli.workers as usize;
 
     // Create output directory if specified
     if let Some(ref out_dir) = cli.output {
@@ -71,7 +68,7 @@ async fn main() -> anyhow::Result<()> {
         scan_result.files,
         scan_result.total_found,
         scan_result.skipped,
-        cli.workers,
+        num_workers,
         &cli.api_url,
     )
     .await?;

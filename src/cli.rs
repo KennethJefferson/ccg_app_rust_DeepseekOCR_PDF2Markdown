@@ -17,9 +17,9 @@ pub struct Cli {
     #[arg(short, long)]
     pub output: Option<PathBuf>,
 
-    /// Number of parallel workers
-    #[arg(short, long, default_value_t = 1)]
-    pub workers: usize,
+    /// Number of parallel workers (1-4)
+    #[arg(short, long, default_value_t = 2, value_parser = clap::value_parser!(u8).range(1..=4))]
+    pub workers: u8,
 
     /// DeepSeek-OCR API URL (e.g., https://{pod-id}-8000.proxy.runpod.net)
     #[arg(long)]

@@ -18,8 +18,8 @@ PDF files on disk                          Runpod GPU Server
 ```
 
 1. **Scanner** walks input directories for `.pdf` files, skipping any with existing `.md` output
-2. **Workers** (configurable count) pull PDFs from a channel and upload them to the API server
-3. **Server** converts the entire PDF via Marker and returns Markdown
+2. **Workers** (1-4, default 2) pull PDFs from a channel and upload them to the API server
+3. **Server** runs a pool of Marker model instances (configurable, default 4) for parallel conversion
 4. **TUI** displays real-time worker status, progress bar, file results, and statistics
 
 ## Requirements
@@ -57,8 +57,8 @@ cargo build --release
 # Convert all PDFs in a directory
 deepseek-ocr-pdf2md -i ./documents --api-url https://<pod-id>-8000.proxy.runpod.net
 
-# Recursive scan with 3 parallel workers, output to a flat directory
-deepseek-ocr-pdf2md -i ./docs -r -w 3 -o ./markdown_output --api-url https://<pod-id>-8000.proxy.runpod.net
+# Recursive scan with 4 parallel workers, output to a flat directory
+deepseek-ocr-pdf2md -i ./docs -r -w 4 -o ./markdown_output --api-url https://<pod-id>-8000.proxy.runpod.net
 ```
 
 ## TUI Dashboard
@@ -93,7 +93,7 @@ deepseek-ocr-pdf2md -i ./docs -r -w 3 -o ./markdown_output --api-url https://<po
 | Endpoint | Method | Description |
 |----------|--------|-------------|
 | `/convert` | POST | Multipart upload of PDF, returns `{ success, markdown, pages_processed, error? }` |
-| `/health` | GET | Returns `{ status, model_loaded, gpu_available }` |
+| `/health` | GET | Returns `{ status, model_loaded, gpu_available, pool_size }` |
 
 ## Project Structure
 
@@ -119,7 +119,7 @@ deepseek-ocr-pdf2md -i ./docs -r -w 3 -o ./markdown_output --api-url https://<po
 └── server/
     ├── app/
     │   ├── main.py       # FastAPI application
-    │   ├── model.py      # Marker PdfConverter loading + conversion
+    │   ├── model.py      # Marker model pool + parallel conversion
     │   └── schemas.py    # Response models
     ├── requirements.txt
     └── start.sh          # Server startup script
@@ -129,6 +129,8 @@ deepseek-ocr-pdf2md -i ./docs -r -w 3 -o ./markdown_output --api-url https://<po
 
 - **No shared mutable state**: Workers send events through channels. The main loop is the sole owner of `AppState`.
 - **Whole-PDF conversion**: Marker processes entire PDFs at once (no per-page loop).
+- **Model pool**: Server loads multiple Marker instances into an async queue for parallel GPU inference. Configurable via `MARKER_POOL_SIZE` env var (default 4).
+- **Pipeline parallelism**: Client workers overlap network I/O with server-side GPU processing — while one PDF is converting, the next is uploading.
 - **Pre-existence check**: Already-converted PDFs are skipped before queuing.
 - **Auto-rename on collision**: When using `-o`, duplicate filenames get `_1`, `_2` suffixes.
 - **Two-stage shutdown**: First Ctrl+C finishes current work gracefully; second forces immediate exit.
@@ -136,13 +138,13 @@ deepseek-ocr-pdf2md -i ./docs -r -w 3 -o ./markdown_output --api-url https://<po
 
 ## Performance
 
-Using Marker on RTX 3090: **~0.4-0.5s per page** (~150 pages/minute). A 224-page book converts in ~90 seconds.
+Using Marker on RTX 3090 with 4 model instances: **~0.4-0.5s per page per instance**. With 4 workers saturating the pool, throughput scales near-linearly up to the GPU's compute limit.
 
-| Document Size | Approximate Time |
-|---------------|-----------------|
-| 10 pages | ~5s |
-| 100 pages | ~45s |
-| 500 pages | ~4 min |
+| Setup | Throughput (est.) |
+|-------|------------------|
+| 1 worker, 1 instance | ~150 pages/min |
+| 2 workers, 2 instances | ~280 pages/min |
+| 4 workers, 4 instances | ~500 pages/min (GPU-bound) |
 
 ## License
 

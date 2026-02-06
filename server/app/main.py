@@ -12,10 +12,12 @@ from app.schemas import ConvertResponse, HealthResponse
 
 logger = logging.getLogger(__name__)
 
+POOL_SIZE = int(os.environ.get("MARKER_POOL_SIZE", "4"))
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    model.load_model()
+    model.load_models(POOL_SIZE)
     yield
 
 
@@ -63,4 +65,5 @@ async def health():
         status="ok" if model.is_loaded() else "unavailable",
         model_loaded=model.is_loaded(),
         gpu_available=torch.cuda.is_available(),
+        pool_size=model.pool_size(),
     )

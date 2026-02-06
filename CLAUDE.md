@@ -5,7 +5,7 @@ PDF2Markdown: A Rust CLI client with TUI dashboard that sends PDFs to a Python F
 
 ## Architecture
 - **Client** (`src/`): Rust + tokio async runtime, ratatui TUI, reqwest HTTP client
-- **Server** (`server/`): Python FastAPI, Marker (marker-pdf) for PDF-to-Markdown conversion
+- **Server** (`server/`): Python FastAPI, Marker (marker-pdf) for PDF-to-Markdown conversion, pooled model instances (up to 4)
 - **Deployment**: Runpod GPU pod (RTX 3090), persistent storage at `/workspace/` (venv, HF cache, server code)
 
 ## Build & Test
@@ -27,6 +27,8 @@ cargo run -- --help      # Show CLI usage
 - `AppState` is sole-owner in the main event loop
 - Server returns 200 for all responses; check `success` field in body
 - Scanner pre-checks for existing `.md` files and skips them
+- Client workers capped at 4 (matches server pool size); default is 2
+- Server model pool size controlled via `MARKER_POOL_SIZE` env var (default 4)
 
 ## File Layout
 ```
@@ -47,9 +49,9 @@ src/
     ui.rs         - Dashboard layout rendering
     widgets.rs    - Worker rows, file lines, spinner, formatting
 server/
-  app/main.py     - FastAPI endpoints (/convert, /health)
-  app/model.py    - Marker PdfConverter loading + async conversion wrapper
-  app/schemas.py  - Pydantic response models
+  app/main.py     - FastAPI endpoints (/convert, /health), pool size config
+  app/model.py    - Marker model pool (asyncio.Queue) + ThreadPoolExecutor
+  app/schemas.py  - Pydantic response models (includes pool_size in health)
 ```
 
 ## Testing
@@ -71,6 +73,9 @@ server/
 - Converter takes a file path, returns rendered output; extract text with `text_from_rendered()`
 - Page count from `rendered.metadata["page_stats"]`
 - Marker handles PDF rendering internally (no separate PyMuPDF step)
+- Server loads N converter instances into an `asyncio.Queue` pool with a dedicated `ThreadPoolExecutor`
+- `MARKER_POOL_SIZE` env var controls instance count (default 4, tune based on VRAM)
+- All instances share one `create_model_dict()` call; VRAM usage logged at startup
 - GPL-3.0 license (server-only, private deployment, no impact on MIT Rust client)
 
 ## Common Pitfalls
@@ -80,3 +85,5 @@ server/
 - `ScanResult` needs `#[derive(Debug)]` for test assertions with `unwrap_err()`
 - Use `#[allow(dead_code)]` on enums with Debug derive when fields are consumed via pattern matching
 - Server `__pycache__` can serve stale code after SCP updates; always `rm -rf __pycache__` before restart
+- Keep uvicorn `--workers 1`; model pool handles concurrency within one process (shared CUDA context)
+- If 4 model instances OOM, reduce with `MARKER_POOL_SIZE=2` or `MARKER_POOL_SIZE=3`

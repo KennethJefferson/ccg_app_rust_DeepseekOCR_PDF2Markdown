@@ -19,7 +19,7 @@ deepseek-ocr-pdf2md [OPTIONS] --input <DIR>... --api-url <URL>
 |----------|---------|-------------|
 | `-r, --recursive` | `false` | Scan subdirectories recursively |
 | `-o, --output <DIR>` | next to source | Flat output directory for all `.md` files |
-| `-w, --workers <N>` | `1` | Number of parallel upload workers |
+| `-w, --workers <N>` | `2` | Number of parallel upload workers (1-4) |
 
 ## Examples
 
@@ -79,11 +79,23 @@ chmod +x start.sh
 6. First run creates a venv at `/workspace/venv/`, installs deps, and downloads Marker models to `/root/.cache/datalab/` (~3.3GB). Subsequent starts skip these steps. For persistence across pod restarts, symlink the cache to `/workspace/`: `mv /root/.cache/datalab /workspace/datalab_cache && ln -s /workspace/datalab_cache /root/.cache/datalab`
 7. The server listens on port 8000. Use the direct TCP port (e.g., `213.192.x.x:40016`) for fastest access, or the Runpod proxy URL.
 
+### Server Configuration
+
+The server loads multiple Marker model instances for parallel processing. Control the pool size via environment variable:
+
+```bash
+# Default: 4 instances (requires ~12-18 GB VRAM)
+./start.sh
+
+# Reduce if VRAM is tight
+MARKER_POOL_SIZE=2 ./start.sh
+```
+
 ### Health Check
 
 ```bash
 curl https://<pod-id>-8000.proxy.runpod.net/health
-# {"status":"ok","model_loaded":true,"gpu_available":true}
+# {"status":"ok","model_loaded":true,"gpu_available":true,"pool_size":4}
 ```
 
 ### Manual Test
@@ -118,13 +130,13 @@ RUST_LOG=debug deepseek-ocr-pdf2md -i ./docs --api-url ...
 
 ## Performance
 
-Using Marker on RTX 3090: **~150 pages/minute** (~0.4-0.5s per page).
+Using Marker on RTX 3090. Throughput scales with pool size and worker count:
 
-| Document Size | Approximate Time |
-|---------------|-----------------|
-| 10 pages | ~5s |
-| 100 pages | ~45s |
-| 500 pages | ~4 min |
+| Setup | Throughput (est.) |
+|-------|------------------|
+| 1 worker / 1 instance | ~150 pages/min |
+| 2 workers / 2 instances | ~280 pages/min |
+| 4 workers / 4 instances | ~500 pages/min (GPU-bound) |
 
 ## Troubleshooting
 
@@ -132,7 +144,7 @@ Using Marker on RTX 3090: **~150 pages/minute** (~0.4-0.5s per page).
 |-------|----------|
 | `Cannot reach API server` | Check server is running and URL is correct. Run health check with curl. |
 | `Request timed out after 300s` | Large PDFs may exceed the 5-minute timeout. The tool retries up to 3 times automatically. |
-| `GPU out of memory` | Restart the server pod to clear VRAM. |
+| `GPU out of memory` | Reduce pool size with `MARKER_POOL_SIZE=2` and restart, or restart the pod to clear VRAM. |
 | `0 PDFs found` | Check input directory path and ensure PDFs have `.pdf` extension. Use `-r` for nested directories. |
 | Server won't start after crash | GPU memory may be held by zombie processes. Restart the Runpod pod to clear VRAM. |
 | Stale code after SCP update | Delete `app/__pycache__/` and restart uvicorn. |
