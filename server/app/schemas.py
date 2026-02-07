@@ -13,3 +13,4 @@ class HealthResponse(BaseModel):
     status: str
     model_loaded: bool
     gpu_available: bool
+    cuda_healthy: bool = False

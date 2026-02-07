@@ -5,7 +5,7 @@ PDF2Markdown: A Rust CLI client with TUI dashboard that sends PDFs to a Python F
 
 ## Architecture
 - **Client** (`src/`): Rust + tokio async runtime, ratatui TUI, reqwest HTTP client
-- **Server** (`server/`): Python FastAPI + uvicorn multi-worker, Marker (marker-pdf) for PDF-to-Markdown conversion
+- **Server** (`server/`): Python FastAPI + gunicorn/uvicorn multi-worker, Marker (marker-pdf) for PDF-to-Markdown conversion
 - **Deployment**: Runpod GPU pod (RTX 3090), persistent storage at `/workspace/` (venv, HF cache, server code)
 
 ## Build & Test
@@ -28,7 +28,10 @@ cargo run -- --help      # Show CLI usage
 - Server returns 200 for all responses; check `success` field in body
 - Scanner pre-checks for existing `.md` files and skips them
 - Client workers capped at 4; default is 2
-- Server uses `uvicorn --workers N` (separate OS processes, each with own CUDA context)
+- Server uses `gunicorn --workers N` with `uvicorn.workers.UvicornWorker` (separate OS processes, each with own CUDA context)
+- Workers auto-recycle after ~100 requests (`--max-requests 100 --max-requests-jitter 20`) for VRAM leak prevention
+- PDFs pre-validated with pypdfium2 before GPU processing (catches bad PDFs immediately)
+- `/health` runs CUDA probe (trivial GPU op) to detect silently corrupted contexts
 - `MARKER_WORKERS` env var controls worker count (default 4, recommend 3 for RTX 3090)
 - Client sends MD5 hash of PDF bytes via `X-File-MD5` header; server rejects corrupted uploads
 - Client retries transient errors: CUDA crashes, upload corruption, timeouts (3 attempts, exponential backoff)
@@ -52,8 +55,8 @@ src/
     ui.rs         - Dashboard layout rendering
     widgets.rs    - Worker rows, file lines, spinner, formatting
 server/
-  app/main.py     - FastAPI endpoints (/convert, /health), CUDA error recovery, MD5 verification
-  app/model.py    - Single PdfConverter per worker process + ThreadPoolExecutor
+  app/main.py     - FastAPI endpoints (/convert, /health), CUDA error recovery, MD5 verification, PDF pre-validation
+  app/model.py    - Single PdfConverter per worker process + CUDA health probe
   app/schemas.py  - Pydantic response models
 ```
 
@@ -68,7 +71,7 @@ server/
 - Server code at `/workspace/pdf2md-server/`
 - `start.sh` is idempotent: skips install if marker-pdf already in venv
 - Always expose TCP port 8000 for direct API access (faster than proxy)
-- When killing uvicorn, use `kill -9 <PID>` by exact PID; `pkill -f uvicorn` kills SSH sessions too
+- When killing gunicorn, use `kill -9 <PID>` by exact PID; `pkill -f gunicorn` may kill SSH sessions
 - After killing, verify GPU memory freed with `nvidia-smi`; zombie VRAM requires pod restart
 
 ## Model API (Marker)
@@ -76,11 +79,11 @@ server/
 - Converter takes a file path, returns rendered output; extract text with `text_from_rendered()`
 - Page count from `rendered.metadata["page_stats"]`
 - Marker handles PDF rendering internally (no separate PyMuPDF step)
-- Each uvicorn worker loads one PdfConverter instance with its own CUDA context
+- Each gunicorn worker loads one PdfConverter instance with its own CUDA context
 - `MARKER_WORKERS` env var controls worker count (default 4, tune based on VRAM)
 - 3 workers: ~10.5 GB idle, safest for mixed workloads on RTX 3090
 - 4 workers: ~14 GB idle, ~18-24 GB active (risky for large PDFs)
-- Fatal CUDA errors (device-side assert, OOM) cause worker to call `os._exit(1)`; uvicorn auto-restarts with fresh context
+- Fatal CUDA errors (device-side assert, OOM) cause worker to call `os._exit(1)`; gunicorn auto-restarts with fresh context
 - `torch.cuda.empty_cache()` called after each conversion and on failure
 - GPL-3.0 license (server-only, private deployment, no impact on MIT Rust client)
 
@@ -91,14 +94,14 @@ server/
 - `ScanResult` needs `#[derive(Debug)]` for test assertions with `unwrap_err()`
 - Use `#[allow(dead_code)]` on enums with Debug derive when fields are consumed via pattern matching
 - Server `__pycache__` can serve stale code after SCP updates; always `rm -rf __pycache__` before restart
-- Use uvicorn `--workers N` for parallel processing (each worker = separate OS process)
+- Use gunicorn `--workers N` with UvicornWorker for parallel processing (each worker = separate OS process)
 - If 4 workers OOM, reduce with `MARKER_WORKERS=3` or `MARKER_WORKERS=2`
-- CUDA device-side assert corrupts a worker's GPU context permanently; server auto-kills worker so uvicorn restarts it
-- Client retries transient CUDA errors (OOM, device-side assert) since uvicorn restarts the failed worker
+- CUDA device-side assert corrupts a worker's GPU context permanently; server auto-kills worker so gunicorn restarts it
+- Client retries transient CUDA errors (OOM, device-side assert) since gunicorn restarts the failed worker
 - Client retries on upload corruption detected by MD5 mismatch
 - `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` reduces VRAM fragmentation
 - Client timeout is 600s (10 min) to accommodate large PDFs over WAN
 - `start.sh` cleans zombie processes, stale temp files, and __pycache__ on every start
-- Killing uvicorn master does NOT kill Marker's multiprocessing.spawn children; must `kill -9` them manually
-- `pkill -f uvicorn` kills SSH sessions too; always kill by exact PID
+- Killing gunicorn master does NOT kill Marker's multiprocessing.spawn children; must `kill -9` them manually
+- `pkill -f gunicorn` may kill SSH sessions; always kill by exact PID
 - Some PDFs cause `malloc_consolidate` glibc heap corruption in Marker/PDFium (uncatchable, crashes worker)

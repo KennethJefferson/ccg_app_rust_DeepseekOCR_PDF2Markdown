@@ -6,6 +6,7 @@ import tempfile
 import time
 from contextlib import asynccontextmanager
 
+import pypdfium2 as pdfium
 import torch
 from fastapi import FastAPI, Header, UploadFile, File
 
@@ -65,6 +66,19 @@ async def convert(
         os.write(fd, pdf_bytes)
         os.close(fd)
 
+        # Pre-validate PDF before sending to Marker (catches bad PDFs without GPU)
+        try:
+            doc = pdfium.PdfDocument(tmp_path)
+            pre_page_count = len(doc)
+            doc.close()
+            if pre_page_count == 0:
+                return ConvertResponse(success=False, error="PDF has 0 pages")
+        except Exception as e:
+            return ConvertResponse(
+                success=False,
+                error=f"Invalid PDF (pre-validation failed): {e}",
+            )
+
         start = time.monotonic()
         markdown, pages = await model.convert(tmp_path)
         elapsed = time.monotonic() - start
@@ -91,7 +105,7 @@ async def convert(
             torch.cuda.empty_cache()
 
         # Fatal CUDA errors corrupt the worker's GPU context permanently.
-        # Kill the worker so uvicorn restarts it with a fresh CUDA context.
+        # Kill the worker so gunicorn restarts it with a fresh CUDA context.
         if _is_fatal_cuda_error(e):
             logger.critical(f"Fatal CUDA error, worker exiting for restart: {e}")
             # Clean up temp file before exit
@@ -107,8 +121,18 @@ async def convert(
 
 @app.get("/health", response_model=HealthResponse)
 async def health():
+    loaded = model.is_loaded()
+    gpu = torch.cuda.is_available()
+    cuda_ok = model.cuda_probe() if (loaded and gpu) else False
+
+    # If model loaded but CUDA broken, this worker is useless - recycle it
+    if loaded and gpu and not cuda_ok:
+        logger.critical("CUDA health probe failed, worker exiting for restart")
+        os._exit(1)
+
     return HealthResponse(
-        status="ok" if model.is_loaded() else "unavailable",
-        model_loaded=model.is_loaded(),
-        gpu_available=torch.cuda.is_available(),
+        status="ok" if loaded else "unavailable",
+        model_loaded=loaded,
+        gpu_available=gpu,
+        cuda_healthy=cuda_ok,
     )

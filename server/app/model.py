@@ -44,3 +44,14 @@ async def convert(pdf_path: str) -> tuple[str, int]:
     return await loop.run_in_executor(
         None, functools.partial(_convert_sync, pdf_path)
     )
+
+
+def cuda_probe() -> bool:
+    """Run a trivial GPU op to verify CUDA context is healthy."""
+    try:
+        t = torch.zeros(1, device="cuda")
+        result = (t + 1).item()
+        del t
+        return result == 1.0
+    except Exception:
+        return False

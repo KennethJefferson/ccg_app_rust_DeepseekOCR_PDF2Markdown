@@ -1,4 +1,5 @@
 marker-pdf
 fastapi
 uvicorn[standard]
+gunicorn
 python-multipart

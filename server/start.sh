@@ -8,8 +8,8 @@ export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
 # --- Cleanup stale processes from previous runs ---
 echo "Cleaning up stale processes..."
-# Kill any existing uvicorn/python workers on port 8000
-for pid in $(pgrep -f 'uvicorn app.main' 2>/dev/null || true); do
+# Kill any existing gunicorn/uvicorn workers on port 8000
+for pid in $(pgrep -f 'gunicorn|uvicorn app.main' 2>/dev/null || true); do
     kill -9 "$pid" 2>/dev/null || true
 done
 # Kill orphaned python3 processes left by crashed uvicorn workers
@@ -48,6 +48,13 @@ if ! "$VENV/bin/pip" show marker-pdf &>/dev/null 2>&1; then
 fi
 
 WORKERS=${MARKER_WORKERS:-4}
-echo "Starting server with $WORKERS workers..."
+echo "Starting server with $WORKERS workers (max-requests: 100)..."
 cd "$SERVER"
-"$VENV/bin/uvicorn" app.main:app --host 0.0.0.0 --port 8000 --workers "$WORKERS"
+"$VENV/bin/gunicorn" app.main:app \
+    --bind 0.0.0.0:8000 \
+    --workers "$WORKERS" \
+    --worker-class uvicorn.workers.UvicornWorker \
+    --max-requests 100 \
+    --max-requests-jitter 20 \
+    --timeout 660 \
+    --graceful-timeout 30
