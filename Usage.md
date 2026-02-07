@@ -81,21 +81,31 @@ chmod +x start.sh
 
 ### Server Configuration
 
-The server loads multiple Marker model instances for parallel processing. Control the pool size via environment variable:
+The server uses uvicorn worker processes for parallel processing. Each worker loads its own Marker model with a dedicated CUDA context. Control worker count via environment variable:
 
 ```bash
-# Default: 4 instances (requires ~12-18 GB VRAM)
+# Default: 4 workers (~14 GB VRAM idle)
 ./start.sh
 
-# Reduce if VRAM is tight
-MARKER_POOL_SIZE=2 ./start.sh
+# Recommended for RTX 3090: 3 workers (~10.5 GB idle, more headroom)
+MARKER_WORKERS=3 ./start.sh
+
+# Conservative: 2 workers (~7 GB idle, safest for large PDFs)
+MARKER_WORKERS=2 ./start.sh
 ```
+
+The startup script (`start.sh`) automatically:
+- Kills stale processes from previous runs
+- Verifies port 8000 is free
+- Clears Python bytecode cache (`__pycache__`)
+- Removes orphaned temp files (`/tmp/marker_*.pdf`)
+- Sets `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` to reduce VRAM fragmentation
 
 ### Health Check
 
 ```bash
 curl https://<pod-id>-8000.proxy.runpod.net/health
-# {"status":"ok","model_loaded":true,"gpu_available":true,"pool_size":4}
+# {"status":"ok","model_loaded":true,"gpu_available":true}
 ```
 
 ### Manual Test
@@ -130,21 +140,25 @@ RUST_LOG=debug pdf2md -i ./docs --api-url ...
 
 ## Performance
 
-Using Marker on RTX 3090. Throughput scales with pool size and worker count:
+Using Marker on RTX 3090. Throughput scales with worker count:
 
-| Setup | Throughput (est.) |
-|-------|------------------|
-| 1 worker / 1 instance | ~150 pages/min |
-| 2 workers / 2 instances | ~280 pages/min |
-| 4 workers / 4 instances | ~500 pages/min (GPU-bound) |
+| Setup | VRAM (idle) | Throughput (est.) |
+|-------|-------------|------------------|
+| 1 worker | ~3.5 GB | ~80 pages/min |
+| 2 workers | ~7 GB | ~150 pages/min |
+| 3 workers (recommended) | ~10.5 GB | ~200 pages/min |
+| 4 workers | ~14 GB | ~250 pages/min (OOM risk) |
 
 ## Troubleshooting
 
 | Issue | Solution |
 |-------|----------|
 | `Cannot reach API server` | Check server is running and URL is correct. Run health check with curl. |
-| `Request timed out after 300s` | Large PDFs may exceed the 5-minute timeout. The tool retries up to 3 times automatically. |
-| `GPU out of memory` | Reduce pool size with `MARKER_POOL_SIZE=2` and restart, or restart the pod to clear VRAM. |
+| `Request timed out after 600s` | Very large PDFs over slow WAN may exceed the 10-minute timeout. The tool retries up to 3 times. |
+| `Upload corrupted` | WAN corruption detected by MD5 check. The client retries automatically. If persistent, try fewer concurrent workers. |
+| `GPU out of memory` | Reduce workers with `MARKER_WORKERS=2` and restart. Consider 3 workers as the safe default for RTX 3090. |
+| CUDA device-side assert | The affected worker auto-kills and uvicorn restarts it. Client retries automatically. No manual intervention needed. |
 | `0 PDFs found` | Check input directory path and ensure PDFs have `.pdf` extension. Use `-r` for nested directories. |
-| Server won't start after crash | GPU memory may be held by zombie processes. Restart the Runpod pod to clear VRAM. |
-| Stale code after SCP update | Delete `app/__pycache__/` and restart uvicorn. |
+| Server won't start after crash | `start.sh` kills stale processes automatically. If VRAM is still held, check for orphaned `python3` processes: `ps aux \| grep python` then `kill -9` them. |
+| Stale code after SCP update | `start.sh` clears `__pycache__` automatically. If updating manually, delete `app/__pycache__/` before restart. |
+| `malloc_consolidate` crash | Glibc heap corruption in Marker/PDFium for specific PDFs. Uncatchable by Python. Worker auto-restarts but the same PDF will crash again. |

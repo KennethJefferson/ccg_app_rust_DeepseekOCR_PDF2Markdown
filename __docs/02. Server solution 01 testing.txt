@@ -1,0 +1,2042 @@
+
+╭─── Claude Code v2.1.32 ──────────────────────────────────────────────────────╮
+│                                                    │ Tips for getting        │
+│                 Welcome back Tony!                 │ started                 │
+│                                                    │ ✔ Run /init to create … │
+│                       ▐▛███▜▌                      │ ─────────────────────── │
+│                      ▝▜█████▛▘                     │ Recent activity         │
+│                        ▘▘ ▝▝                       │ No recent activity      │
+│                                                    │                         │
+│               Opus 4.6 · Claude Max                │                         │
+│   E:\Workspace.Dev.Rust\DeepseekOCR_PDF2Markdown   │                         │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+✻ Conversation compacted (ctrl+o for history)
+
+  ⎿  Read server\start.sh (29 lines)
+  ⎿ Read C:\Users\TONYBA~1\AppData\Local\Temp\claude\E--Workspace-Dev-Rust-Deeps
+    ekOCR-PDF2Markdown\tasks\be2e853.output (2 lines)
+  ⎿  Read server\app\model.py (73 lines)
+  ⎿ Read C:\Users\TONYBA~1\AppData\Local\Temp\claude\E--Workspace-Dev-Rust-Deeps
+    ekOCR-PDF2Markdown\tasks\bc018d3.output (5 lines)
+  ⎿  Read .gitignore (38 lines)
+  ⎿  Plan file referenced (C:\Users\Tony 
+     Baloney\.claude\plans\misty-conjuring-abelson.md)
+
+● Let me check the status of the running client and the server to see if the
+  first book has finished processing.
+
+● Task Output(non-blocking) b27bbd7
+  ⎿     Finished `release` profile [optimized] target(s) in 4.02s
+         Running `target\release\deepseek-ocr-pdf2md.exe -i ./__pdfs --api-
+    url 'http://213.192.2.119:40048' -w 1`
+    … +314 lines (ctrl+o to expand)
+
+
+● Bash(ssh -i "$HOME/.ssh/id_rsa" -p 40047 -o StrictHostKeyChecking=no
+      root@213.192.2.119 "grep -c 'pad_token_id' /workspace/server.log
+      2>/dev/null || echo 'no log fou…)
+  ⎿  85
+  ⎿  (timeout 15s)
+
+❯ /context 
+
+● The client is still running - the TUI shows the spinner is active. The server
+  has processed 85 of 735 pages for the first book (~11.6%). At ~7.5s per page,
+  there's roughly 80+ minutes remaining for this book.
+
+  Let me check the server log for the most recent activity and the current
+  elapsed time.
+
+● Bash(ssh -i "$HOME/.ssh/id_rsa" -p 40047 -o StrictHostKeyChecking=no
+      root@213.192.2.119 "tail -5 /workspace/server.log 2>/dev/null; echo '---';
+       grep -c 'POST /conver…)
+  ⎿ Setting `pad_token_id` to `eos_token_id`:None for open-end generation.
+    The attention mask and the pad token id were not set. As a consequence,
+     you may observe unexpected behavior. Please pass your input's `attenti
+    … +10 lines (ctrl+o to expand)
+
+
+  ⎿  (timeout 15s)
+
+● Status update: 87 of 735 pages processed for the first book. No /convert
+  responses have come back yet (the whole PDF is processed in one request, so
+  the response only comes after all 735 pages are done).
+
+  At ~7.5s/page, there's roughly 80 minutes remaining for this first book to
+  finish.
+
+  Since this is a long wait, I have two options:
+
+  1. I can set up a background monitoring script that polls the server and kills
+   the client when the first book completes
+  2. You can let it run and come back later
+
+  Let me set up the background monitor so it auto-kills when the book finishes.
+
+● Bash(ssh -i "$HOME/.ssh/id_rsa" -p 40047 -o StrictHostKeyChecking=no
+      root@213.192.2.119 "grep -c '200 OK' /workspace/server.log 2>/dev/null;
+      echo '---'; grep -ci 'er…)
+  ⎿  2
+     ---
+     2
+  ⎿  (timeout 15s)
+
+● Interesting - 2 "200 OK" responses already sent, meaning 2 PDFs have
+  completed, and there are 2 errors. Let me check what happened.
+
+● Bash(ssh -i "$HOME/.ssh/id_rsa" -p 40047 -o StrictHostKeyChecking=no
+      root@213.192.2.119 "grep -i '200
+      OK\|error\|traceback\|POST.*convert\|pages_processed\|Conversio…)
+  ⎿ You are using a model of type deepseek_vl_v2 to instantiate a model of
+    type DeepseekOCR2. This is not supported for all configurations of mode
+    ls and can yield errors.
+    … +5 lines (ctrl+o to expand)
+
+  ⎿  (timeout 15s)
+
+❯ /context 
+
+● Those "200 OK" were just health check responses, not convert completions. No
+  books have finished yet. Let me check more accurately.
+
+● Bash(ssh -i "$HOME/.ssh/id_rsa" -p 40047 -o StrictHostKeyChecking=no
+      root@213.192.2.119 "grep 'POST.*convert' /workspace/server.log
+      2>/dev/null; echo '---PAGE COUNT-…)
+  ⎿  ---PAGE COUNT---
+     91
+  ⎿  (timeout 15s)
+
+● Current status: 91 pages processed, 0 books completed. The first book (735
+  pages) is still being processed server-side in a single /convert request. No
+  POST response has been sent back yet.
+
+  At ~7.5s/page, the first book will take roughly 80 more minutes to finish
+  (total ~92 min, 12 min elapsed). The Rust client is waiting on the HTTP
+  response.
+
+  Regarding your /context -- that's a built-in CLI command, not something I
+  handle.
+
+  Would you like me to:
+  - Keep monitoring and kill the client when the book finishes (~80 min wait)
+  - Kill it now since you've confirmed the pipeline works end-to-end
+
+  The pipeline is proven working - pages are being OCR'd successfully on the
+  server. The only thing we haven't verified is whether the combined markdown
+  response makes it back to the client and gets written to disk correctly.
+
+✻ Worked for 3m 24s
+
+❯ Yeah, this isn't usable if its this long for one damn book, lets do some  
+  research on other AI/ML OCR solutions, specifically conversion timing and 
+   check back in. Place your findings in .\research folder in markdowns     
+
+● Let me kill the client first, then research alternatives.
+
+● Stop Task
+  ⎿ cd "E:\Workspace.Dev.Rust\DeepseekOCR_PDF2Markdown" && cargo run
+    --release -- -i "./__pdfs" --api-url http://213.192.2.119:40048 -w 1
+    2>&1 · stopped
+
+● Bash(mkdir -p "E:\Workspace.Dev.Rust\DeepseekOCR_PDF2Markdown\research")
+  ⎿  (No content)
+
+● Client killed. Now let me research OCR alternatives in parallel -- focusing on
+   speed, accuracy, and PDF-to-markdown capability.
+
+● 5 Task agents launched (ctrl+o to expand)
+   ├─ Research Marker PDF OCR tool
+   │  ⎿  Running in the background (shift+↑ to manage)
+   ├─ Research Docling PDF OCR tool
+   │  ⎿  Running in the background (shift+↑ to manage)
+   ├─ Research MinerU PDF OCR tool
+   │  ⎿  Running in the background (shift+↑ to manage)
+   ├─ Research Surya/Nougat/GOT OCR tools
+   │  ⎿  Running in the background (shift+↑ to manage)
+   └─ Research OCR speed comparison data
+      ⎿  Running in the background (shift+↑ to manage)
+
+● 5 research agents are running in parallel, each investigating different OCR
+  tools and benchmarks. They're all making good progress. I'll wait for them to
+  finish and then give you a summary.
+
+✻ Cogitated for 45s
+
+● Agent "Research MinerU PDF OCR tool" completed
+
+● MinerU research is done -- looks very promising speed-wise. Waiting on the
+  other 4 agents to finish.
+
+● Agent "Research Marker PDF OCR tool" completed
+
+● Marker research done too -- 5-15 pages/sec estimated on RTX 3090, way faster
+  than our current 8 pages/min. 2 down, 3 to go.
+
+● Agent "Research Docling PDF OCR tool" completed
+
+● Docling done -- MIT licensed, ~2 pages/sec on GPU. 3 down, 2 to go (other OCR
+  tools + speed comparison).
+
+● Agent "Research Surya/Nougat/GOT OCR tools" completed
+
+● 4 down, 1 to go -- the speed comparison summary agent is still working.
+
+● Agent "Research OCR speed comparison data" completed
+
+● All 5 research agents are done. Let me verify the files were created and give
+  you the highlights.
+
+● Searched for 1 pattern (ctrl+o to expand)
+
+● All 5 research files are in .\research\. Here's the executive summary:
+
+  Our Problem
+
+  DeepSeek-OCR-2 at ~8 pages/min on RTX 3090 = 92 minutes for a 735-page book. 
+  Unacceptable.
+
+  Top Alternatives (ranked by speed on comparable hardware)
+  ┌──────────┬──────────────┬───────────┬───────────────┬─────────────────────┐
+  │   Tool   │  Pages/sec   │ 735-page  │    License    │        Notes        │
+  │          │    (GPU)     │   Book    │               │                     │
+  ├──────────┼──────────────┼───────────┼───────────────┼─────────────────────┤
+  │          │              │           │ GPL-3.0 +     │ Fastest             │
+  │ Marker   │ 5-15 (RTX    │ ~1-2 min  │ commercial    │ open-source; known  │
+  │          │ 3090 est.)   │           │ limits        │ 3090 perf bug       │
+  │          │              │           │               │ though              │
+  ├──────────┼──────────────┼───────────┼───────────────┼─────────────────────┤
+  │ MinerU   │ 1.0-1.7 (RTX │           │               │ Best accuracy       │
+  │ 2.5      │  3090/4090)  │ ~7-12 min │ AGPL-3.0      │ (beats GPT-4o on    │
+  │          │              │           │               │ benchmarks)         │
+  ├──────────┼──────────────┼───────────┼───────────────┼─────────────────────┤
+  │          │              │           │               │ Best license;       │
+  │ Docling  │ ~2 (L4 GPU)  │ ~6 min    │ MIT           │ IBM-backed; weak on │
+  │          │              │           │               │  scanned docs       │
+  ├──────────┼──────────────┼───────────┼───────────────┼─────────────────────┤
+  │ Mistral  │ ~33 (cloud   │           │               │ $1-2 per 1,000      │
+  │ OCR 3    │ API)         │ ~22 sec   │ API-only      │ pages; no           │
+  │          │              │           │               │ self-hosting        │
+  ├──────────┼──────────────┼───────────┼───────────────┼─────────────────────┤
+  │ Gemini   │              │           │               │ $0.12/book;         │
+  │ Flash    │ fast (cloud) │ ~1.5 min  │ API           │ cheapest cloud      │
+  │          │              │           │               │ option              │
+  └──────────┴──────────────┴───────────┴───────────────┴─────────────────────┘
+  Key Insight
+
+  The speed comparison research flagged that our DeepSeek-OCR-2 may be running
+  36x slower than expected -- H100 benchmarks show 4.65 pages/sec, and even RTX
+  3090 should be doing 1-1.5 pages/sec, not 0.13. Our per-page rendering +
+  inference pipeline likely has overhead that could be optimized.
+
+  Recommendations
+
+  1. Quick win: Investigate why DeepSeek-OCR-2 is so slow (DPI too high? no
+  batching? network overhead?)
+  2. Best local option: Marker for raw speed, MinerU for quality
+  3. Best cloud option: Mistral OCR 3 or Gemini Flash if you don't mind API
+  costs
+  4. Best license: Docling (MIT, fully free)
+
+  All details with benchmarks, architecture breakdowns, and limitations are in
+  the 5 markdown files in .\research\.
+
+❯ Whats the status on that conversion? 
+
+● Let me check if the server finished processing that first book even after we
+  killed the client.
+
+● Bash(ssh -i "$HOME/.ssh/id_rsa" -p 40047 -o StrictHostKeyChecking=no
+      root@213.192.2.119 "grep -c 'pad_token_id' /workspace/server.log
+      2>/dev/null; echo '---'; grep '…)
+  ⎿  173
+     ---
+     ---
+     … +5 lines (ctrl+o to expand)
+  ⎿  (timeout 15s)
+
+● The server is still grinding through it -- 173 of 735 pages processed
+  (~23.5%). Even though we killed the client, the server-side request is still
+  running (the HTTP connection was already established and uvicorn doesn't abort
+   on client disconnect by default).
+
+  No POST /convert response logged yet -- it won't appear until all 735 pages
+  are done.
+
+  At 7.5s/page, roughly 70 more minutes until it finishes the inference. The
+  response will just get dropped since the client is gone, but at least we'll
+  know the full pipeline works. Want me to kill the server-side process too, or
+  let it finish as a proof-of-concept?
+
+❯ kill it, no point wasting GPU cycles 
+
+● Bash(ssh -i "$HOME/.ssh/id_rsa" -p 40047 -o StrictHostKeyChecking=no
+      root@213.192.2.119 "pkill -f uvicorn; sleep 1; pgrep -f uvicorn || echo
+      'server stopped'")
+  ⎿  Error: Exit code 255
+
+● Got the same SSH-killing-itself issue as before. Let me use a more targeted
+  approach.
+
+● Bash(ssh -i "$HOME/.ssh/id_rsa" -p 40047 -o StrictHostKeyChecking=no
+      root@213.192.2.119 "kill $(pgrep -f 'uvicorn app.main' | head -1)
+      2>/dev/null; echo done")
+  ⎿  done
+     /usr/bin/bash: line 1: pgrep: command not found
+  ⎿  (timeout 15s)
+
+● Bash(ssh -i "$HOME/.ssh/id_rsa" -p 40047 -o StrictHostKeyChecking=no
+      root@213.192.2.119 "ps aux | grep uvicorn | grep -v grep")
+  ⎿ root        3249  229  1.1 67539708 11986820 ?   Sl   08:31 105:16 /wor
+    kspace/venv/bin/python3 /workspace/venv/bin/uvicorn app.main:app --host
+     0.0.0.0 --port 8000 --workers 1
+
+
+  ⎿  (timeout 15s)
+
+● Bash(ssh -i "$HOME/.ssh/id_rsa" -p 40047 -o StrictHostKeyChecking=no
+      root@213.192.2.119 "kill 3249 && echo 'killed' || echo 'failed'")
+  ⎿  killed
+  ⎿  (timeout 15s)
+
+● Server killed. GPU is free. The pod is still running if you want to test a
+  different OCR solution on it later.
+
+✻ Worked for 39s
+
+● Background command "Start server with persistent venv" completed (exit code 0)
+
+● That's just a stale notification from the previous server start task --
+  already handled. Server is killed, GPU is idle.
+
+  Where do you want to go from here? Based on the research, the most interesting
+   options are:
+
+  - Marker -- fastest local option, could do that 735-page book in ~1-2 min on
+  your 3090
+  - MinerU 2.5 -- best accuracy, ~7-12 min for the book, but AGPL license
+  - Mistral OCR 3 API -- 22 seconds per book, ~$1/1000 pages
+  - Investigate DeepSeek-OCR-2 slowness -- it may be 36x slower than it should
+  be (batching/config issue)
+
+❯ before we talk about making a switch, lets do a deep dive and find out    
+  what may be going wrong and attempt to fix it. lets brainstorm            
+
+● Good call. Let me dig into our server code and the model's actual inference
+  pipeline to identify what's throttling us.
+
+● Read 3 files (ctrl+o to expand)
+
+● Now let me look at the model's actual infer() method to understand what
+  crop_mode, base_size, and image_size actually do under the hood.
+
+● Bash(ssh -i "$HOME/.ssh/id_rsa" -p 40047 -o StrictHostKeyChecking=no
+      root@213.192.2.119 "find /workspace/models/DeepSeek-OCR-2 -name '*.py' |
+      head -20")
+  ⎿  /workspace/models/DeepSeek-OCR-2/modeling_deepseekv2.py
+     /workspace/models/DeepSeek-OCR-2/modeling_deepseekocr2.py
+     /workspace/models/DeepSeek-OCR-2/configuration_deepseek_v2.py
+     … +2 lines (ctrl+o to expand)
+  ⎿  (timeout 15s)
+
+● Bash(ssh -i "$HOME/.ssh/id_rsa" -p 40047 -o StrictHostKeyChecking=no
+      root@213.192.2.119 "grep -n 'def infer'
+      /workspace/models/DeepSeek-OCR-2/modeling_deepseekocr2.p…)
+  ⎿ 693:    def infer(self, tokenizer, prompt='', image_file='', output_pat
+    h = '', base_size=1024, image_size=640, crop_mode=True, test_compress=F
+    alse, save_results=False, eval_mode=False):
+
+
+  ⎿  (timeout 15s)
+
+● Bash(ssh -i "$HOME/.ssh/id_rsa" -p 40047 -o StrictHostKeyChecking=no
+      root@213.192.2.119 "sed -n '693,850p'
+      /workspace/models/DeepSeek-OCR-2/modeling_deepseekocr2.py")
+  ⎿     def infer(self, tokenizer, prompt='', image_file='', output_path =
+    '', base_size=1024, image_size=640, crop_mode=True, test_compress=False
+    , save_results=False, eval_mode=False):
+    … +184 lines (ctrl+o to expand)
+
+  ⎿  (timeout 15s)
+
+● This is revealing. Let me see the dynamic_preprocess function and understand
+  how many crops it generates per page.
+
+● Bash(ssh -i "$HOME/.ssh/id_rsa" -p 40047 -o StrictHostKeyChecking=no
+      root@213.192.2.119 "grep -n 'def dynamic_preprocess\|def
+      select_best_resolution\|candidate_resol…)
+  ⎿ 173:def dynamic_preprocess(image, min_num=2, max_num=6, image_size=768,
+     use_thumbnail=False):
+    770:                        # best_width, best_height = select_best_res
+    olution(image.size, self.candidate_resolutions)
+
+
+  ⎿  (timeout 15s)
+
+● Bash(ssh -i "$HOME/.ssh/id_rsa" -p 40047 -o StrictHostKeyChecking=no
+      root@213.192.2.119 "sed -n '173,240p'
+      /workspace/models/DeepSeek-OCR-2/modeling_deepseekocr2.py")
+  ⎿ def dynamic_preprocess(image, min_num=2, max_num=6, image_size=768, use
+    _thumbnail=False):
+        orig_width, orig_height = image.size
+    … +68 lines (ctrl+o to expand)
+
+  ⎿  (timeout 15s)
+
+● Now let me see the actual generation call and the rest of the infer method.
+
+● Bash(ssh -i "$HOME/.ssh/id_rsa" -p 40047 -o StrictHostKeyChecking=no
+      root@213.192.2.119 "sed -n '850,950p'
+      /workspace/models/DeepSeek-OCR-2/modeling_deepseekocr2.py")
+  ⎿                      valid_img_tokens += int(144 * 1)
+
+                     width_crop_num, height_crop_num = 1, 1
+     … +110 lines (ctrl+o to expand)
+  ⎿  (timeout 15s)
+
+● Now I have the full picture. Let me also quickly check if flash attention is
+  actually loading and what the find_closest_aspect_ratio yields for typical PDF
+   pages.
+
+● Bash(ssh -i "$HOME/.ssh/id_rsa" -p 40047 -o StrictHostKeyChecking=no
+      root@213.192.2.119 "grep -n 'def find_closest_aspect_ratio'
+      /workspace/models/DeepSeek-OCR-2/mod…)
+  ⎿ 156:def find_closest_aspect_ratio(aspect_ratio, target_ratios, width, h
+    eight, image_size):
+
+  ⎿  (timeout 15s)
+
+● Bash(ssh -i "$HOME/.ssh/id_rsa" -p 40047 -o StrictHostKeyChecking=no
+      root@213.192.2.119 "grep -i 'flash\|FlashAttention\|attn_implementation'
+      /workspace/server.log 2…)
+  ⎿ You are attempting to use Flash Attention 2.0 without specifying a torc
+    h dtype. This might lead to unexpected behaviour
+    You are attempting to use Flash Attention 2.0 with a model not initiali
+    … +2 lines (ctrl+o to expand)
+
+
+  ⎿  (timeout 15s)
+
+● Bash(ssh -i "$HOME/.ssh/id_rsa" -p 40047 -o StrictHostKeyChecking=no
+      root@213.192.2.119 "sed -n '156,172p'
+      /workspace/models/DeepSeek-OCR-2/modeling_deepseekocr2.py")
+  ⎿ def find_closest_aspect_ratio(aspect_ratio, target_ratios, width, heigh
+    t, image_size):
+        best_ratio_diff = float('inf')
+    … +15 lines (ctrl+o to expand)
+
+  ⎿  (timeout 15s)
+
+● Now I have the complete picture. Here's the analysis:
+
+  ---
+  Root Cause Analysis: Why We're 7.5s/page
+
+  Bottleneck #1: crop_mode=True generates 6 crops per page (BIGGEST factor)
+
+  A standard PDF page at 144 DPI = 1224 x 1584 pixels. Since both dimensions
+  exceed 768, dynamic_preprocess() kicks in:
+
+  - Aspect ratio = 1224/1584 = 0.773
+  - Best match from target_ratios: (2, 3) = 0.667 (6 blocks)
+  - That means 6 crops at 768x768 each, PLUS 1 global view at 1024x1024
+
+  Token count per page:
+  - Global view: 16x16 = 256 tokens
+  - 6 crops at 12x12 each: 6 x 144 = 864 tokens
+  - Separator token: 1
+  - Total: ~1121 image tokens + prompt tokens + up to 8192 output tokens
+
+  The model is autoregressing through a massive context for every single page.
+
+  Bottleneck #2: Flash Attention likely NOT working properly
+
+  The server log shows:
+  You are attempting to use Flash Attention 2.0 without specifying a torch
+  dtype.
+  You are attempting to use Flash Attention 2.0 with a model not initialized on
+  GPU.
+
+  We load the model on CPU first, then call .cuda().to(torch.bfloat16). Flash
+  Attention wants the model initialized on GPU with dtype set from the start. It
+   may be falling back to vanilla attention, which is much slower for long 
+  sequences.
+
+  Bottleneck #3: 144 DPI is overkill
+
+  At 144 DPI, pages are 1224x1584 -- far over the 768 threshold, forcing max
+  crops. Consider:
+  ┌─────┬───────────┬───────┬──────────────┬───────────────┐
+  │ DPI │ Page Size │ Crops │ Image Tokens │ Relative Load │
+  ├─────┼───────────┼───────┼──────────────┼───────────────┤
+  │ 144 │ 1224x1584 │ 6     │ ~1121        │ 1x (current)  │
+  ├─────┼───────────┼───────┼──────────────┼───────────────┤
+  │ 96  │ 816x1056  │ 2     │ ~545         │ ~0.5x         │
+  ├─────┼───────────┼───────┼──────────────┼───────────────┤
+  │ 72  │ 612x792   │ 0     │ ~257         │ ~0.23x        │
+  └─────┴───────────┴───────┴──────────────┴───────────────┘
+  At 72 DPI, pages are under 768px on both dimensions, so crop_mode never 
+  triggers -- just one global view.
+
+  Bottleneck #4: image_size=768 (above default)
+
+  The default in the model's infer() signature is image_size=640. We're using
+  768, which generates 144 tokens per crop instead of 100.
+
+  Bottleneck #5: Sequential, single-page processing
+
+  Each page runs through the full encode-decode pipeline individually. No
+  batching.
+
+  Bottleneck #6: 20% GPU utilization = autoregressive decode bottleneck
+
+  Autoregressive generation is inherently sequential (one token at a time). Most
+   CUDA cores sit idle during decode. This is normal for LLMs, but it means the
+  long context from crops makes it worse.
+
+  ---
+  Proposed Fixes (ordered by impact)
+  Fix: Fix Flash Attention init (load directly to GPU w/ dtype)
+  Expected Speedup: 2-3x
+  Quality Risk: None
+  ────────────────────────────────────────
+  Fix: Reduce DPI to 72 (eliminates all crops)
+  Expected Speedup: 3-5x
+  Quality Risk: Medium - small text may blur
+  ────────────────────────────────────────
+  Fix: Set crop_mode=False
+  Expected Speedup: 3-5x
+  Quality Risk: Medium - same as above
+  ────────────────────────────────────────
+  Fix: Reduce DPI to 96 (2 crops instead of 6)
+  Expected Speedup: 2x
+  Quality Risk: Low
+  ────────────────────────────────────────
+  Fix: Use default image_size=640
+  Expected Speedup: 1.3x
+  Quality Risk: Low
+  ────────────────────────────────────────
+  Fix: Batch 2-4 pages together
+  Expected Speedup: 1.5-2x
+  Quality Risk: None
+  Combined (fix FA2 + DPI 96 + image_size 640): estimated ~6-10x speedup,
+  bringing us from 7.5s/page to ~0.75-1.25s/page. That 735-page book would drop
+  from 92 min to ~9-15 min.
+
+  Aggressive (fix FA2 + DPI 72 + crop_mode=False): estimated ~10-20x, 
+  potentially ~0.4-0.75s/page. The book in ~5-9 min. But quality tradeoff on
+  small text.
+
+  Want me to implement and test these fixes?
+
+✻ Crunched for 2m 44s
+
+❯ yes, we're going to implment all the fixes, but one at a time and test    
+  before we move onto the next fix. lets implment!                          
+
+● Starting with Fix #1: Flash Attention initialization -- zero quality risk,
+  potentially 2-3x speedup.
+
+  I'll also add per-page timing so we can measure the impact of each fix.
+
+● Read 2 files (ctrl+o to expand)
+
+● Good. Two changes: (1) Fix model loading to initialize directly on GPU with
+  dtype, (2) Add per-page timing to the convert endpoint.
+
+● Update(server\app\model.py)
+  ⎿  Added 3 lines, removed 1 line
+      35          trust_remote_code=True,                                
+      36          _attn_implementation="flash_attention_2",              
+      37          use_safetensors=True,                                  
+      38 +        torch_dtype=torch.bfloat16,                            
+      39 +        device_map="cuda",                                     
+      40      )                                                          
+      41 -    _model = model.eval().cuda().to(torch.bfloat16)            
+      41 +    _model = model.eval()                                      
+      42      logger.info("Model loaded successfully")                   
+      43                                                                 
+      44                                                                 
+
+● Update(server\app\main.py)
+  ⎿  Added 1 line
+      1  import logging                                                  
+      2  import shutil                                                   
+      3 +import time                                                     
+      4  from contextlib import asynccontextmanager                      
+      5                                                                  
+      6  import torch                                                    
+
+● Now add per-page timing to the convert endpoint:
+
+● Update(server\app\main.py)
+  ⎿  Added 6 lines
+      30          temp_dir, image_paths = pdf_to_images(pdf_bytes)       
+      31                                                                 
+      32          markdown_parts: list[str] = []                         
+      33 +        page_times: list[float] = []                           
+      34 +        total_start = time.monotonic()                         
+      35          for i, img_path in enumerate(image_paths):             
+      36              try:                                               
+      37 +                page_start = time.monotonic()                  
+      38                  md = await model.infer(img_path)               
+      39 +                elapsed = time.monotonic() - page_start        
+      40 +                page_times.append(elapsed)                     
+      41 +                logger.info("Page %d/%d: %.2fs", i + 1,        
+         +len(image_paths), elapsed)                                     
+      42                  markdown_parts.append(md)                      
+      43              except torch.cuda.OutOfMemoryError:                
+      44                  logger.error("OOM on page %d, returning        
+          partial results", i)                                           
+
+● Update(server\app\main.py)
+  ⎿  Added 6 lines
+      49                      error=f"GPU out of memory on page {i + 1}. 
+           {len(markdown_parts)}/{len(image_paths)} pages processed.",   
+      50                  )                                              
+      51                                                                 
+      52 +        total_elapsed = time.monotonic() - total_start         
+      53 +        avg = sum(page_times) / len(page_times) if page_times  
+         +else 0                                                         
+      54 +        logger.info(                                           
+      55 +            "Done: %d pages in %.1fs (avg %.2fs/page, %.1f     
+         +pages/min)",                                                   
+      56 +            len(markdown_parts), total_elapsed, avg, 60 / avg  
+         +if avg > 0 else 0,                                             
+      57 +        )                                                      
+      58          return ConvertResponse(                                
+      59              success=True,                                      
+      60              markdown="\n\n---\n\n".join(markdown_parts),       
+
+● Good. Now deploy the updated files to the server and restart.
+
+● Bash(scp -i "$HOME/.ssh/id_rsa" -P 40047 -o StrictHostKeyChecking=no
+      "E:\Workspace.Dev.Rust\DeepseekOCR_PDF2Markdown\server\app\model.py"
+      "E:\Workspace.Dev.Rust\Deep…)
+  ⎿  (No content)
+  ⎿  (timeout 30s)
+
+● Files deployed. Now clear the old log and start the server.
+
+● Bash(ssh -i "$HOME/.ssh/id_rsa" -p 40047 -o StrictHostKeyChecking=no
+      root@213.192.2.119 "truncate -s 0 /workspace/server.log; cd
+      /workspace/deepseek-ocr-server && no…)
+  ⎿  Running in the background (↓ to manage)
+  ⎿  (timeout 15s)
+
+● Bash(sleep 15 && ssh -i "$HOME/.ssh/id_rsa" -p 40047 -o
+      StrictHostKeyChecking=no root@213.192.2.119 "cat /workspace/server.log")
+  ⎿
+
+
+     … +33 lines (ctrl+o to expand)
+  ⎿  (timeout 1m)
+
+● Bash(ssh -i "$HOME/.ssh/id_rsa" -p 40047 -o StrictHostKeyChecking=no
+      root@213.192.2.119 "grep -i
+      'flash\|error\|loaded\|started\|Uvicorn\|Application' /workspace/ser…)
+  ⎿  grep: /workspace/server.log: binary file matches
+  ⎿  (timeout 15s)
+
+● Bash(ssh -i "$HOME/.ssh/id_rsa" -p 40047 -o StrictHostKeyChecking=no
+      root@213.192.2.119 "strings /workspace/server.log | grep -i
+      'flash\|error\|loaded\|started\|Uvic…)
+  ⎿      raise ImportError(
+     ImportError: Using `low_cpu_mem_usage=True` or a `device_map` requires
+     Accelerate: `pip install 'accelerate>=0.26.0'`
+     ERROR:    Application startup failed. Exiting.
+  ⎿  (timeout 15s)
+
+● Missing accelerate package. Let me install it and retry.
+
+● Bash(ssh -i "$HOME/.ssh/id_rsa" -p 40047 -o StrictHostKeyChecking=no
+      root@213.192.2.119 "/workspace/venv/bin/pip install 'accelerate>=0.26.0'
+      -q")
+  ⎿  [notice] A new release of pip is available: 24.0 -> 26.0.1
+     [notice] To update, run: python3 -m pip install --upgrade pip
+  ⎿  (timeout 1m)
+
+● Bash(ssh -i "$HOME/.ssh/id_rsa" -p 40047 -o StrictHostKeyChecking=no
+      root@213.192.2.119 "ps aux | grep uvicorn | grep -v grep | awk '{print
+      \$2}' | xargs -r kill 2>/…)
+  ⎿  Running in the background (↓ to manage)
+  ⎿  (timeout 15s)
+
+● Model loading takes ~30s. Let me wait and check.
+
+● Bash(sleep 30 && ssh -i "$HOME/.ssh/id_rsa" -p 40047 -o
+      StrictHostKeyChecking=no root@213.192.2.119 "strings /workspace/server.log
+       | grep -i 'flash\|error\|loaded\|s…)
+  ⎿  INFO:     Started server process [6899]
+     INFO:     Waiting for application startup.
+     You are using a model of type deepseek_vl_v2 to instantiate a model of
+     … +4 lines (ctrl+o to expand)
+  ⎿  (timeout 1m)
+
+● The Flash Attention warnings are gone -- no more "without specifying a torch
+  dtype" or "not initialized on GPU". FA2 should be working properly now.
+
+  Let me test with a short PDF. First, let me find the smallest one.
+
+● Bash(powershell -Command "Get-ChildItem
+      'E:\Workspace.Dev.Rust\DeepseekOCR_PDF2Markdown\__pdfs\*.pdf' |
+      Sort-Object Length | Select-Object -First 5 Name, @{N='SizeMB…)
+  ⎿  Error: Exit code 1
+     At line:1 char:159
+     + ... | Select-Object -First 5 Name, @{N='SizeMB';E={[math]::Round(extglob.
+     ...
+     +                                                                  ~
+     Missing ')' in method call.
+     At line:1 char:159
+     + ...  -First 5 Name, @{N='SizeMB';E={[math]::Round(extglob.Length/1MB,1)}}
+     +                                                   ~~~~~~~~~~~~~~~~~~
+     Unexpected token 'extglob.Length/1MB' in expression or statement.
+     At line:1 char:177
+
+     … +25 lines (ctrl+o to see all)
+
+● Searched for 1 pattern, read 2 files (ctrl+o to expand)
+
+● Only the 735-page book in there. Let me check if there are more PDFs elsewhere
+   or in subdirectories.
+
+● Searched for 1 pattern (ctrl+o to expand)
+
+● Just the one big book. I'll use curl to send it directly and let the server
+  process just a few pages so we can measure timing. Actually, the whole PDF
+  gets sent and all 735 pages render -- let me instead create a quick test by
+  extracting just the first 5 pages into a small PDF on the server.
+
+● Bash(ssh -i "$HOME/.ssh/id_rsa" -p 40047 -o StrictHostKeyChecking=no
+      root@213.192.2.119 "/workspace/venv/bin/python -c \"
+      import fitz…)
+  ⎿  Created test PDF: 5 pages
+  ⎿  (timeout 15s)
+
+● Now test with curl and watch the per-page timing:
+
+● Bash(ssh -i "$HOME/.ssh/id_rsa" -p 40047 -o StrictHostKeyChecking=no
+      root@213.192.2.119 "time curl -s -X POST http://localhost:8000/convert -F
+      'file=@/workspace/test…)
+  ⎿  Error: Exit code 1
+       File "<string>", line 1
+         import sys,json; d=json.load(sys.stdin); print(f"Success: 
+     {d["success"]}, Pages: {d["pages_processed"]}"); print(d["markdown"][:500])
+                                                                       ^^^^^^^
+     SyntaxError: f-string: unmatched '['
+
+     real       0m36.531s
+     user       0m0.007s
+     sys        0m0.018s
+
+● 36.5s for 5 pages = ~7.3s/page. Let me check the per-page timing in the server
+   log:
+
+● Bash(ssh -i "$HOME/.ssh/id_rsa" -p 40047 -o StrictHostKeyChecking=no
+      root@213.192.2.119 "strings /workspace/server.log | grep -E 'Page
+      |Done:'")
+  ⎿  Error: Exit code 1
+
+● Bash(ssh -i "$HOME/.ssh/id_rsa" -p 40047 -o StrictHostKeyChecking=no
+      root@213.192.2.119 "strings /workspace/server.log | grep -i
+      'page\|done\|avg'")
+  ⎿  Error: Exit code 1
+
+● Bash(ssh -i "$HOME/.ssh/id_rsa" -p 40047 -o StrictHostKeyChecking=no
+      root@213.192.2.119 "strings /workspace/server.log | tail -30")
+  ⎿ The attention layers in this model are transitioning from computing the
+     RoPE embeddings internally through `position_ids` (2D tensor with the
+    indexes of the tokens), to using externally computed `position_embeddin
+    … +39 lines (ctrl+o to expand)
+
+
+  ⎿  (timeout 15s)
+
+● Key observations from the log:
+
+  1. Flash attention IS fixed (no more dtype/GPU warnings), but it made no speed
+   difference -- 7.3s/page vs 7.5s before. The bottleneck isn't attention speed.
+  2. The real problem is confirmed: BASE: [1, 256, 1280] + PATCHES: [6, 144, 
+  1280] -- every page generates 6 crops with 1120 total image tokens, even for
+  this simple test PDF. The 144 DPI rendering makes pages too large.
+
+  Fix #1 result: no meaningful speedup. Flash attention was probably already
+  working via fallback.
+
+  Moving to Fix #2: Reduce DPI from 144 to 72. At 72 DPI, pages will be 612x792
+  -- both under 768, so zero crops. This should drop tokens from 1120 to ~257
+  per page.
+
+● Read 1 file (ctrl+o to expand)
+
+● Update(server\app\pdf_pipeline.py)
+  ⎿  Added 1 line, removed 1 line
+       4  import fitz                                                    
+       5                                                                 
+       6                                                                 
+       7 -def pdf_to_images(pdf_bytes: bytes, dpi: int = 144             
+         -) -> tuple[str, list[str]]:                                    
+       7 +def pdf_to_images(pdf_bytes: bytes, dpi: int = 72              
+         +) -> tuple[str, list[str]]:                                    
+       8      """Convert PDF bytes to PNG images. Returns (temp_dir,     
+          list_of_image_paths)."""                                       
+       9      temp_dir = tempfile.mkdtemp(prefix="deepseek_ocr_")        
+      10      doc = fitz.open(stream=pdf_bytes, filetype="pdf")          
+
+● Also fix logging so our page timings actually show up -- switch to print()
+  since the logger config isn't propagating:
+
+● Read 1 file (ctrl+o to expand)
+
+● Update(server\app\main.py)
+  ⎿  Added 1 line, removed 1 line
+      38                  md = await model.infer(img_path)               
+      39                  elapsed = time.monotonic() - page_start        
+      40                  page_times.append(elapsed)                     
+      41 -                logger.info("Page %d/%d: %.2fs", i + 1,        
+         -len(image_paths), elapsed)                                     
+      41 +                print(f"[TIMING] Page {i + 1}/{len(image_paths)
+         +}: {elapsed:.2f}s", flush=True)                                
+      42                  markdown_parts.append(md)                      
+      43              except torch.cuda.OutOfMemoryError:                
+      44                  logger.error("OOM on page %d, returning        
+          partial results", i)                                           
+
+● Update(server\app\main.py)
+  ⎿  Added 4 lines, removed 3 lines
+      51                                                                 
+      52          total_elapsed = time.monotonic() - total_start         
+      53          avg = sum(page_times) / len(page_times) if page_times  
+          else 0                                                         
+      54 -        logger.info(                                           
+      55 -            "Done: %d pages in %.1fs (avg %.2fs/page, %.1f     
+         -pages/min)",                                                   
+      56 -            len(markdown_parts), total_elapsed, avg, 60 / avg  
+         -if avg > 0 else 0,                                             
+      54 +        print(                                                 
+      55 +            f"[TIMING] Done: {len(markdown_parts)} pages in    
+         +{total_elapsed:.1f}s "                                         
+      56 +            f"(avg {avg:.2f}s/page, {60 / avg if avg > 0 else  
+         +0:.1f} pages/min)",                                            
+      57 +            flush=True,                                        
+      58          )                                                      
+      59          return ConvertResponse(                                
+      60              success=True,                                      
+
+● Now deploy and restart:
+
+● Bash(scp -i "$HOME/.ssh/id_rsa" -P 40047 -o StrictHostKeyChecking=no
+      "E:\Workspace.Dev.Rust\DeepseekOCR_PDF2Markdown\server\app\main.py"
+      "E:\Workspace.Dev.Rust\Deeps…)
+  ⎿  (No content)
+  ⎿  (timeout 30s)
+
+● Bash(ssh -i "$HOME/.ssh/id_rsa" -p 40047 -o StrictHostKeyChecking=no
+      root@213.192.2.119 "ps aux | grep uvicorn | grep -v grep | awk '{print
+      \$2}' | xargs -r kill 2>/…)
+  ⎿  Running in the background (↓ to manage)
+  ⎿  (timeout 15s)
+
+● Bash(sleep 30 && ssh -i "$HOME/.ssh/id_rsa" -p 40047 -o
+      StrictHostKeyChecking=no root@213.192.2.119 "strings /workspace/server.log
+       | grep -i 'Uvicorn running\|startu…)
+  ⎿ INFO:     Waiting for application startup.
+        new_error_msgs, offload_index, state_dict_index = _load_state_dict_
+    into_meta_model(
+    … +4 lines (ctrl+o to expand)
+
+  ⎿  (timeout 1m)
+
+● OOM on startup -- the previous model didn't fully release VRAM. Let me clear
+  it.
+
+● Bash(ssh -i "$HOME/.ssh/id_rsa" -p 40047 -o StrictHostKeyChecking=no
+      root@213.192.2.119 "ps aux | grep -E 'python|uvicorn' | grep -v grep | awk
+       '{print \$2}' | xargs…)
+  ⎿  | 51%   54C    P0            203W /  350W |   24125MiB /  24576MiB |
+       17%      Default |
+     awk: 1: unexpected character '\'
+  ⎿  (timeout 15s)
+
+● GPU still fully loaded at 24125MiB. Zombie process. Let me force-kill
+  everything.
+
+● Bash(ssh -i "$HOME/.ssh/id_rsa" -p 40047 -o StrictHostKeyChecking=no
+      root@213.192.2.119 "fuser -k /dev/nvidia* 2>/dev/null; sleep 3; nvidia-smi
+       --query-compute-apps=…)
+  ⎿  pid, used_gpu_memory [MiB]
+     3996089, 15774 MiB
+     4132380, 8340 MiB
+     … +23 lines (ctrl+o to expand)
+  ⎿  (timeout 15s)
+
+● Bash(ssh -i "$HOME/.ssh/id_rsa" -p 40047 -o StrictHostKeyChecking=no
+      root@213.192.2.119 "kill -9 3996089 4132380 2>/dev/null; sleep 5;
+      nvidia-smi | grep MiB")
+  ⎿  | 50%   52C    P0            135W /  350W |   24125MiB /  24576MiB |
+       19%      Default |
+  ⎿  (timeout 15s)
+
+● Bash(ssh -i "$HOME/.ssh/id_rsa" -p 40047 -o StrictHostKeyChecking=no
+      root@213.192.2.119 "nvidia-smi
+      --query-compute-apps=pid,process_name,used_memory --format=csv")
+  ⎿  pid, process_name, used_gpu_memory [MiB]
+     3996089, [Not Found], 15774 MiB
+     4132380, [Not Found], 8340 MiB
+  ⎿  (timeout 15s)
+
+● Zombie GPU processes -- killed but memory not released. Need to reset the GPU
+  driver.
+
+● Bash(ssh -i "$HOME/.ssh/id_rsa" -p 40047 -o StrictHostKeyChecking=no
+      root@213.192.2.119 "nvidia-smi --gpu-reset 2>&1 || echo 'reset failed,
+      trying alternative'; nvid…)
+  ⎿ Unable to disable persistence mode for GPU 00000000:01:00.0: Unknown Er
+    ror
+    reset failed, trying alternative
+    … +4 lines (ctrl+o to expand)
+
+  ⎿  (timeout 30s)
+
+● Bash(ssh -i "$HOME/.ssh/id_rsa" -p 40047 -o StrictHostKeyChecking=no
+      root@213.192.2.119 "rmmod nvidia_uvm 2>&1; modprobe nvidia_uvm 2>&1; sleep
+       2; nvidia-smi | grep…)
+  ⎿  bash: line 1: rmmod: command not found
+     bash: line 1: modprobe: command not found
+     | 49%   52C    P0            135W /  350W |   24125MiB /  24576MiB |
+       20%      Default |
+  ⎿  (timeout 15s)
+
+● Container environment -- can't reset GPU driver. The zombie VRAM is stuck. We
+  need to restart the pod.
+
+  Also, since Fix #1 (flash attention) showed no speedup (7.3s vs 7.5s), let me
+  revert the model loading to avoid the device_map/accelerate dependency and the
+   OOM issue during loading. The real fix is the DPI change.
+
+● Update(server\app\model.py)
+  ⎿  Added 1 line, removed 2 lines
+      36          _attn_implementation="flash_attention_2",              
+      37          use_safetensors=True,                                  
+      38          torch_dtype=torch.bfloat16,                            
+      39 -        device_map="cuda",                                     
+      39      )                                                          
+      40 -    _model = model.eval()                                      
+      40 +    _model = model.eval().cuda()                               
+      41      logger.info("Model loaded successfully")                   
+      42                                                                 
+      43                                                                 
+
+● Bash(scp -i "$HOME/.ssh/id_rsa" -P 40047 -o StrictHostKeyChecking=no
+      "E:\Workspace.Dev.Rust\DeepseekOCR_PDF2Markdown\server\app\model.py"
+      "E:\Workspace.Dev.Rust\Deep…)
+  ⎿  (No content)
+  ⎿  (timeout 30s)
+
+● Files deployed. You'll need to restart the Runpod pod to clear the zombie GPU
+  memory. Same SSH port will likely change.
+
+  Once it's back up, the server will start with:
+  - DPI 72 (was 144) -- pages will be 612x792, no crops, ~257 tokens vs 1120
+  - Per-page timing logs via [TIMING] prints
+  - torch_dtype=torch.bfloat16 passed upfront (mild fix, no device_map 
+  dependency)
+
+  The DPI change is the big one -- should see 3-5x speedup if the crop 
+  elimination theory is correct.
+
+✻ Worked for 9m 5s
+
+● Background command "Start server with flash attention fix" completed (exit
+code 0)
+
+● Stale notification from the earlier server start -- already handled.
+
+  We're waiting on you to restart the Runpod pod to clear the zombie GPU memory.
+   Let me know the new SSH port once it's back up and I'll start the server and
+  run the DPI test.
+
+● Background command "Restart server with DPI fix" completed (exit code 0)
+
+● Another stale notification. Still waiting on you to restart the pod -- just
+  paste the new connection details when it's back up.
+
+● Background command "Restart server after installing accelerate" completed
+(exit code 0)
+
+● Stale notification again. All old server tasks have completed and been
+  handled.
+
+  Waiting on you to restart the Runpod pod so the zombie GPU memory clears. Drop
+   the new SSH/TCP ports here when it's back.
+
+❯ restarted, new info:                                                      
+                                                                            
+  Pods                                                                      
+                                                                            
+  sore_coffee_opossum                                                       
+                                                                            
+                                                                            
+  Connect                                                                   
+                                                                            
+  Details                                                                   
+                                                                            
+  Telemetry                                                                 
+                                                                            
+  Logs                                                                      
+                                                                            
+  Template Readme                                                           
+  HTTP services                                                             
+  Connect to your service using HTTP using a proxied domain and port        
+                                                                            
+  Port 8888                                                                 
+                                                                            
+  Jupyter Lab                                                               
+  Ready                                                                     
+  SSH                                                                       
+  Connect to your Pod using SSH. (No support for SCP & SFTP)                
+                                                                            
+  $                                                                         
+  ssh 1drlduvpyzzfhd-64410bd1@ssh.runpod.io -i ~/.ssh/id_ed25519            
+  SSH over exposed TCP                                                      
+  Connect to your Pod using SSH over a direct TCP connection. (Supports SCP 
+   & SFTP)                                                                  
+                                                                            
+  $                                                                         
+  ssh root@213.192.2.119 -p 40015 -i ~/.ssh/id_ed25519                      
+  Web terminal                                                              
+  Connect to your Pod using a terminal directly in your browser             
+                                                                            
+                                                                            
+  Enable web terminal                                                       
+                                                                            
+  Direct TCP ports                                                          
+  Connect to your Pod using direct TCP connections to exposed ports.        
+                                                                            
+  213.192.2.119:40015                                                       
+                                                                            
+  :22                                                                       
+                                                                            
+  213.192.2.119:40016                                                       
+                                                                            
+  :8000                                                                     
+
+● Got it. New ports: SSH on 40015, API on 40016. Let me start the server and
+  test.
+
+● Bash(ssh -i "$HOME/.ssh/id_rsa" -p 40015 -o StrictHostKeyChecking=no
+      root@213.192.2.119 "nvidia-smi | grep MiB; echo '---'; ls
+      /workspace/deepseek-ocr-server/app/pdf…)
+  ⎿  | 30%   33C    P8             25W /  350W |       1MiB /  24576MiB |
+        0%      Default |
+     ---
+     … +4 lines (ctrl+o to expand)
+  ⎿  (timeout 15s)
+
+● GPU is clean -- 1MiB used. Files persisted. Let me verify the DPI fix is in
+  place and start the server.
+
+● Bash(ssh -i "$HOME/.ssh/id_rsa" -p 40015 -o StrictHostKeyChecking=no
+      root@213.192.2.119 "grep 'dpi'
+      /workspace/deepseek-ocr-server/app/pdf_pipeline.py; echo '---'; g…)
+  ⎿ def pdf_to_images(pdf_bytes: bytes, dpi: int = 72) -> tuple[str, list[s
+    tr]]:
+        zoom = dpi / 72
+    … +7 lines (ctrl+o to expand)
+
+  ⎿  (timeout 15s)
+
+● All fixes confirmed. Starting server.
+
+● Bash(ssh -i "$HOME/.ssh/id_rsa" -p 40015 -o StrictHostKeyChecking=no
+      root@213.192.2.119 "truncate -s 0 /workspace/server.log; cd
+      /workspace/deepseek-ocr-server && no…)
+  ⎿  Running in the background (↓ to manage)
+  ⎿  (timeout 1m)
+
+● Read 1 file (ctrl+o to expand)
+
+● Server is up. No flash attention warnings. Now let me run the 5-page test and
+  compare timing.
+
+● Bash(ssh -i "$HOME/.ssh/id_rsa" -p 40015 -o StrictHostKeyChecking=no
+      root@213.192.2.119 "time curl -s -X POST http://localhost:8000/convert -F
+      'file=@/workspace/test…)
+  ⎿  ---
+     [TIMING] Page 1/5: 8.92s
+     [TIMING] Page 2/5: 7.67s
+     … +8 lines (ctrl+o to expand)
+  ⎿  (timeout 2m)
+
+● Hmm -- 7.61s/page. Essentially unchanged! Let me check if the crops actually
+  got eliminated.
+
+● Bash(ssh -i "$HOME/.ssh/id_rsa" -p 40015 -o StrictHostKeyChecking=no
+      root@213.192.2.119 "strings /workspace/server.log | grep -E
+      'BASE|PATCHES|crop'")
+  ⎿  BASE:  torch.Size([1, 256, 1280])
+     PATCHES:  torch.Size([6, 144, 1280])
+     BASE:  torch.Size([1, 256, 1280])
+     … +7 lines (ctrl+o to expand)
+  ⎿  (timeout 15s)
+
+● The DPI change was too conservative. At 72 DPI, pages are 612x792 -- the
+  height (792) still exceeds the 768 threshold, so all 6 crops still trigger.
+
+  The cutoff for zero crops on letter pages is ~69 DPI (11" * 69 = 759). But
+  rather than play with fractional DPI, let me just set crop_mode=False directly
+   -- that bypasses all cropping regardless of image size.
+
+● Update(server\app\model.py)
+  ⎿  Added 1 line, removed 1 line
+      53                  output_path=tmp_dir,                           
+      54                  base_size=1024,                                
+      55                  image_size=768,                                
+      56 -                crop_mode=True,                                
+      56 +                crop_mode=False,                               
+      57                  save_results=False,                            
+      58                  eval_mode=True,                                
+      59              )                                                  
+
+● Bash(scp -i "$HOME/.ssh/id_rsa" -P 40015 -o StrictHostKeyChecking=no
+      "E:\Workspace.Dev.Rust\DeepseekOCR_PDF2Markdown\server\app\model.py"
+      root@213.192.2.119:/workspa…)
+  ⎿  (No content)
+  ⎿  (timeout 15s)
+
+● Bash(ssh -i "$HOME/.ssh/id_rsa" -p 40015 -o StrictHostKeyChecking=no
+      root@213.192.2.119 "ps aux | grep uvicorn | grep -v grep | awk '{print
+      \$2}' | xargs -r kill; sl…)
+  ⎿  Running in the background (↓ to manage)
+  ⎿  (timeout 15s)
+
+● Bash(sleep 35 && ssh -i "$HOME/.ssh/id_rsa" -p 40015 -o
+      StrictHostKeyChecking=no root@213.192.2.119 "strings /workspace/server.log
+       | grep -i 'Uvicorn running\|error\…)
+  ⎿ INFO:     Waiting for application startup.
+    You are using a model of type deepseek_vl_v2 to instantiate a model of
+    type DeepseekOCR2. This is not supported for all configurations of mode
+    … +6 lines (ctrl+o to expand)
+
+  ⎿  (timeout 1m)
+
+● Old process still held the port. Let me force kill.
+
+● Bash(ssh -i "$HOME/.ssh/id_rsa" -p 40015 -o StrictHostKeyChecking=no
+      root@213.192.2.119 "kill -9 \$(lsof -t -i :8000) 2>/dev/null; sleep 2;
+      truncate -s 0 /workspace/…)
+  ⎿  Running in the background (↓ to manage)
+  ⎿  (timeout 15s)
+
+● Bash(sleep 40 && ssh -i "$HOME/.ssh/id_rsa" -p 40015 -o
+      StrictHostKeyChecking=no root@213.192.2.119 "strings /workspace/server.log
+       | grep -i 'Uvicorn running\|Applic…)
+  ⎿  INFO:     Waiting for application startup.
+     INFO:     Application startup complete.
+  ⎿  (timeout 1m)
+
+● Bash(ssh -i "$HOME/.ssh/id_rsa" -p 40015 -o StrictHostKeyChecking=no
+      root@213.192.2.119 "curl -s http://localhost:8000/health")
+  ⎿  {
+       "status": "ok",
+       "model_loaded": true,
+     … +2 lines (ctrl+o to expand)
+  ⎿  (timeout 15s)
+
+● Server is up. Now the real test -- crop_mode=False:
+
+● Bash(ssh -i "$HOME/.ssh/id_rsa" -p 40015 -o StrictHostKeyChecking=no
+      root@213.192.2.119 "truncate -s 0 /workspace/server.log; time curl -s -X
+      POST http://localhost:8…)
+  ⎿  ---
+     [TIMING] Page 1/5: 7.75s
+     [TIMING] Page 2/5: 7.67s
+     … +19 lines (ctrl+o to expand)
+  ⎿  (timeout 2m)
+
+● Still 6 patches! The change isn't taking effect. Let me verify what's actually
+   on the server.
+
+● Bash(ssh -i "$HOME/.ssh/id_rsa" -p 40015 -o StrictHostKeyChecking=no
+      root@213.192.2.119 "grep crop_mode
+      /workspace/deepseek-ocr-server/app/model.py")
+  ⎿                  crop_mode=False,
+  ⎿  (timeout 15s)
+
+● The file has crop_mode=False but the model still produces 6 patches. Let me
+  check if the running process is actually using the new code -- the
+  crop_mode=False path should print "directly resize":
+
+● Bash(ssh -i "$HOME/.ssh/id_rsa" -p 40015 -o StrictHostKeyChecking=no
+      root@213.192.2.119 "strings /workspace/server.log | grep -i 'directly
+      resize'; echo '---'; find…)
+  ⎿  ---
+     /workspace/deepseek-ocr-server/app/__pycache__
+     ---
+     … +2 lines (ctrl+o to expand)
+  ⎿  (timeout 15s)
+
+● No "directly resize" output -- the old cached bytecode is being used. Let me
+  clear __pycache__ and restart.
+
+● Bash(ssh -i "$HOME/.ssh/id_rsa" -p 40015 -o StrictHostKeyChecking=no
+      root@213.192.2.119 "kill -9 \$(lsof -t -i :8000) 2>/dev/null; sleep 2; rm
+      -rf /workspace/deepsee…)
+  ⎿  Running in the background (↓ to manage)
+  ⎿  (timeout 15s)
+
+● Bash(sleep 35 && ssh -i "$HOME/.ssh/id_rsa" -p 40015 -o
+      StrictHostKeyChecking=no root@213.192.2.119 "curl -s
+      http://localhost:8000/health")
+  ⎿  {
+       "status": "ok",
+       "model_loaded": true,
+     … +2 lines (ctrl+o to expand)
+  ⎿  (timeout 1m)
+
+● Bash(ssh -i "$HOME/.ssh/id_rsa" -p 40015 -o StrictHostKeyChecking=no
+      root@213.192.2.119 "truncate -s 0 /workspace/server.log; time curl -s -X
+      POST http://localhost:8…)
+  ⎿  ---TIMING---
+     [TIMING] Page 1/5: 7.76s
+     [TIMING] Page 2/5: 8.01s
+     … +19 lines (ctrl+o to expand)
+  ⎿  (timeout 2m)
+
+● Something is wrong -- the parameter isn't reaching the model. Let me add a
+  debug print to verify.
+
+● Read 1 file (ctrl+o to expand)
+
+● Update(server\app\model.py)
+  ⎿  Added 1 line
+      45      assert _model is not None and _tokenizer is not None,      
+          "Model not loaded"                                             
+      46                                                                 
+      47      with tempfile.TemporaryDirectory(prefix="ocr_out_") as     
+          tmp_dir:                                                       
+      48 +        print(f"[DEBUG] calling infer with crop_mode=False,    
+         +image_size=768, base_size=1024", flush=True)                   
+      49          with torch.inference_mode():                           
+      50              result = _model.infer(                             
+      51                  _tokenizer,                                    
+
+● Bash(scp -i "$HOME/.ssh/id_rsa" -P 40015 -o StrictHostKeyChecking=no
+      "E:\Workspace.Dev.Rust\DeepseekOCR_PDF2Markdown\server\app\model.py"
+      root@213.192.2.119:/workspa…)
+  ⎿         print(f"[DEBUG] calling infer with crop_mode=False, image_size=
+    768, base_size=1024", flush=True)
+                    crop_mode=False,
+    … +2 lines (ctrl+o to expand)
+
+  ⎿  (timeout 30s)
+
+● Bash(ssh -i "$HOME/.ssh/id_rsa" -p 40015 -o StrictHostKeyChecking=no
+      root@213.192.2.119 "ps aux | grep uvicorn | grep -v grep | awk '{print
+      \$2}' | xargs kill -9 2>/…)
+  ⎿  {
+       "status": "ok",
+       "model_loaded": true,
+     … +3 lines (ctrl+o to expand)
+  ⎿  (timeout 1m)
+
+● Bash(ssh -i "$HOME/.ssh/id_rsa" -p 40015 -o StrictHostKeyChecking=no
+      root@213.192.2.119 "truncate -s 0 /workspace/server.log; curl -s -X POST
+      http://localhost:8000/c…)
+  ⎿  BASE:  torch.Size([1, 256, 1280])
+     PATCHES:  torch.Size([6, 144, 1280])
+     [TIMING] Page 1/5: 8.02s
+     … +13 lines (ctrl+o to expand)
+  ⎿  (timeout 2m)
+
+● The [DEBUG] print isn't appearing even though [TIMING] does. Let me check if
+  it's a strings filtering issue.
+
+● Bash(ssh -i "$HOME/.ssh/id_rsa" -p 40015 -o StrictHostKeyChecking=no
+      root@213.192.2.119 "cat /workspace/server.log | tr -cd '[:print:]\n' |
+      grep DEBUG")
+  ⎿  Error: Exit code 1
+
+● Something's off with how the module is being loaded. Let me add a module-level
+   print to model.py and also try without --workers:
+
+● Update(server\app\model.py)
+  ⎿  Added 1 line
+       8  from transformers import AutoModel, AutoTokenizer              
+       9                                                                 
+      10  logger = logging.getLogger(__name__)                           
+      11 +print("[MODEL.PY] Module loaded - crop_mode will be False",    
+         +flush=True)                                                    
+      12                                                                 
+      13  MODEL_NAME = "/workspace/models/DeepSeek-OCR-2"                
+      14  PROMPT = "<image>\n<|grounding|>Convert the document to        
+          markdown."                                                     
+
+● Bash(scp -i "$HOME/.ssh/id_rsa" -P 40015 -o StrictHostKeyChecking=no
+      "E:\Workspace.Dev.Rust\DeepseekOCR_PDF2Markdown\server\app\model.py"
+      root@213.192.2.119:/workspa…)
+  ⎿  Running in the background (↓ to manage)
+  ⎿  (timeout 30s)
+
+● Bash(sleep 35 && ssh -i "$HOME/.ssh/id_rsa" -p 40015 -o
+      StrictHostKeyChecking=no root@213.192.2.119 "strings /workspace/server.log
+       | grep -E 'MODEL.PY|Uvicorn runnin…)
+  ⎿  [MODEL.PY] Module loaded - crop_mode will be False
+  ⎿  (timeout 1m)
+
+● Module loads fine. Server might still be loading the model. Let me wait and
+  test:
+
+● Bash(ssh -i "$HOME/.ssh/id_rsa" -p 40015 -o StrictHostKeyChecking=no
+      root@213.192.2.119 "curl -s http://localhost:8000/health 2>/dev/null ||
+      echo 'not ready yet'")
+  ⎿  {
+       "status": "ok",
+       "model_loaded": true,
+     … +2 lines (ctrl+o to expand)
+  ⎿  (timeout 15s)
+
+● Bash(ssh -i "$HOME/.ssh/id_rsa" -p 40015 -o StrictHostKeyChecking=no
+      root@213.192.2.119 "truncate -s 0 /workspace/server.log; curl -s -X POST
+      http://localhost:8000/c…)
+  ⎿  BASE:  torch.Size([1, 256, 1280])
+     PATCHES:  torch.Size([6, 144, 1280])
+     [TIMING] Page 1/5: 7.78s
+     … +13 lines (ctrl+o to expand)
+  ⎿  (timeout 2m)
+
+● The [DEBUG] print inside _infer_sync isn't appearing. Let me check if the
+  function is even being called -- maybe there's an import issue where an old
+  compiled version persists elsewhere:
+
+● Bash(ssh -i "$HOME/.ssh/id_rsa" -p 40015 -o StrictHostKeyChecking=no
+      root@213.192.2.119 "find /workspace -name '*.pyc' -path '*/app/*'
+      2>/dev/null; echo '---'; find…)
+  ⎿ /workspace/deepseek-ocr-server/app/__pycache__/schemas.cpython-311.pyc
+    /workspace/deepseek-ocr-server/app/__pycache__/pdf_pipeline.cpython-311
+    .pyc
+    … +9 lines (ctrl+o to expand)
+
+  ⎿  (timeout 15s)
+
+● Wait -- there's a nested server/app/model.py! And the __pycache__ recreated.
+  Let me check which model.py is actually being used:
+
+● Bash(ssh -i "$HOME/.ssh/id_rsa" -p 40015 -o StrictHostKeyChecking=no
+      root@213.192.2.119 "grep crop_mode
+      /workspace/deepseek-ocr-server/app/model.py; echo '---'; grep…)
+  ⎿ print("[MODEL.PY] Module loaded - crop_mode will be False", flush=True)
+            print(f"[DEBUG] calling infer with crop_mode=False, image_size=
+    768, base_size=1024", flush=True)
+    … +8 lines (ctrl+o to expand)
+
+
+  ⎿  (timeout 15s)
+
+● The .pyc is correct, and our code IS being imported. The [DEBUG] print must be
+   getting lost in the binary log data. Let me write to a separate file to
+  confirm:
+
+● Update(server\app\model.py)
+  ⎿  Added 2 lines
+      47                                                                 
+      48      with tempfile.TemporaryDirectory(prefix="ocr_out_") as     
+          tmp_dir:                                                       
+      49          print(f"[DEBUG] calling infer with crop_mode=False,    
+          image_size=768, base_size=1024", flush=True)                   
+      50 +        with open("/workspace/debug.log", "a") as _dbg:        
+      51 +            _dbg.write(f"infer called: crop_mode=False,        
+         +image={image_path}\n")                                         
+      52          with torch.inference_mode():                           
+      53              result = _model.infer(                             
+      54                  _tokenizer,                                    
+
+● Bash(scp -i "$HOME/.ssh/id_rsa" -P 40015 -o StrictHostKeyChecking=no
+      "E:\Workspace.Dev.Rust\DeepseekOCR_PDF2Markdown\server\app\model.py"
+      root@213.192.2.119:/workspa…)
+  ⎿  Running in the background (↓ to manage)
+  ⎿  (timeout 30s)
+
+● Bash(sleep 35 && ssh -i "$HOME/.ssh/id_rsa" -p 40015 -o
+      StrictHostKeyChecking=no root@213.192.2.119 "curl -s
+      http://localhost:8000/health && curl -s -X POST http://l…)
+  ⎿  Error: Exit code 1
+     {"status":"ok","model_loaded":true,"gpu_available":true}---
+
+● Bash(ssh -i "$HOME/.ssh/id_rsa" -p 40015 -o StrictHostKeyChecking=no
+      root@213.192.2.119 "cat /workspace/server.log | tr -cd '[:print:]\n' |
+      grep -E 'TIMING|DEBUG|err…)
+  ⎿ You are using a model of type deepseek_vl_v2 to instantiate a model of
+    type DeepseekOCR2. This is not supported for all configurations of mode
+    ls and can yield errors.
+    … +23 lines (ctrl+o to expand)
+
+  ⎿  (timeout 15s)
+
+● Found the problem! The "address already in use" error means the old server 
+  never died. We've been testing against the ORIGINAL code the entire time! Our
+  kills have been failing due to shell escaping issues over SSH.
+
+  Let me properly kill it:
+
+● Bash(ssh -i "$HOME/.ssh/id_rsa" -p 40015 -o StrictHostKeyChecking=no
+      root@213.192.2.119 "ps aux | grep uvicorn | grep -v grep")
+  ⎿ root        1009 44.1  0.1 50200884 1733504 ?    Sl   10:01   7:34 /wor
+    kspace/venv/bin/python3 /workspace/venv/bin/uvicorn app.main:app --host
+     0.0.0.0 --port 8000 --workers 1
+
+
+  ⎿  (timeout 15s)
+
+● Bash(ssh -i "$HOME/.ssh/id_rsa" -p 40015 -o StrictHostKeyChecking=no
+      root@213.192.2.119 "kill -9 1009; sleep 2; ps aux | grep uvicorn | grep -v
+       grep || echo 'all dea…)
+  ⎿  all dead
+  ⎿  (timeout 15s)
+
+● Dead. Now restart with our updated code:
+
+● Bash(ssh -i "$HOME/.ssh/id_rsa" -p 40015 -o StrictHostKeyChecking=no
+      root@213.192.2.119 "rm -rf /workspace/deepseek-ocr-server/app/__pycache__;
+       rm -f /workspace/debu…)
+  ⎿  Running in the background (↓ to manage)
+  ⎿  (timeout 15s)
+
+● Bash(sleep 40 && ssh -i "$HOME/.ssh/id_rsa" -p 40015 -o
+      StrictHostKeyChecking=no root@213.192.2.119 "strings /workspace/server.log
+       | grep -E 'MODEL.PY|Uvicorn runnin…)
+  ⎿ [MODEL.PY] Module loaded - crop_mode will be False
+    You are using a model of type deepseek_vl_v2 to instantiate a model of
+    type DeepseekOCR2. This is not supported for all configurations of mode
+    … +3 lines (ctrl+o to expand)
+
+  ⎿  (timeout 1m)
+
+● No bind errors, our module-level print shows up. NOW the real test:
+
+● Bash(ssh -i "$HOME/.ssh/id_rsa" -p 40015 -o StrictHostKeyChecking=no
+      root@213.192.2.119 "truncate -s 0 /workspace/server.log; rm -f
+      /workspace/debug.log; time curl -…)
+  ⎿ ===DEBUG===
+    infer called: crop_mode=False, image=/tmp/deepseek_ocr_1ub05aoa/page_00
+    00.png
+    … +35 lines (ctrl+o to expand)
+
+  ⎿  (timeout 2m)
+
+● Interesting -- NO PATCHES confirms crops are eliminated (144 tokens vs 1120),
+  but it's 2x SLOWER (15.95s vs 7.38s). The crop_mode=False path squashes the
+  image to 768x768, distorting the text. The model generates way more output
+  tokens trying to decode blurry/distorted text.
+
+  Wrong approach. Let me pivot: keep crop_mode=True but lower DPI to 68 so both
+  page dimensions stay under 768. This uses the padded global view (preserves
+  aspect ratio, 256 tokens) without triggering any crops.
+
+● Update(server\app\model.py)
+  ⎿  Added 1 line, removed 1 line
+      57                  output_path=tmp_dir,                           
+      58                  base_size=1024,                                
+      59                  image_size=768,                                
+      60 -                crop_mode=False,                               
+      60 +                crop_mode=True,                                
+      61                  save_results=False,                            
+      62                  eval_mode=True,                                
+      63              )                                                  
+
+● Update(server\app\pdf_pipeline.py)
+  ⎿  Added 1 line, removed 1 line
+       4  import fitz                                                    
+       5                                                                 
+       6                                                                 
+       7 -def pdf_to_images(pdf_bytes: bytes, dpi: int = 72              
+         -) -> tuple[str, list[str]]:                                    
+       7 +def pdf_to_images(pdf_bytes: bytes, dpi: int = 68              
+         +) -> tuple[str, list[str]]:                                    
+       8      """Convert PDF bytes to PNG images. Returns (temp_dir,     
+          list_of_image_paths)."""                                       
+       9      temp_dir = tempfile.mkdtemp(prefix="deepseek_ocr_")        
+      10      doc = fitz.open(stream=pdf_bytes, filetype="pdf")          
+
+● Now properly kill the server and deploy:
+
+● Bash(ssh -i "$HOME/.ssh/id_rsa" -p 40015 -o StrictHostKeyChecking=no
+      root@213.192.2.119 "ps aux | grep uvicorn | grep -v grep")
+  ⎿ root        4034  0.0  0.0   4364     0 ?        S    10:19   0:00 bash
+     -c rm -rf /workspace/deepseek-ocr-server/app/__pycache__; rm -f /works
+    pace/debug.log; truncate -s 0 /workspace/server.log; cd /workspace/deep
+    … +5 lines (ctrl+o to expand)
+
+
+
+  ⎿  (timeout 10s)
+
+● Bash(ssh -i "$HOME/.ssh/id_rsa" -p 40015 -o StrictHostKeyChecking=no
+      root@213.192.2.119 "kill -9 4035 4034; sleep 2; ps aux | grep uvicorn |
+      grep -v grep || echo 'de…)
+  ⎿  dead
+  ⎿  (timeout 10s)
+
+● Bash(scp -i "$HOME/.ssh/id_rsa" -P 40015 -o StrictHostKeyChecking=no
+      "E:\Workspace.Dev.Rust\DeepseekOCR_PDF2Markdown\server\app\model.py"
+      "E:\Workspace.Dev.Rust\Deep…)
+  ⎿  (No content)
+  ⎿  (timeout 15s)
+
+● Bash(ssh -i "$HOME/.ssh/id_rsa" -p 40015 -o StrictHostKeyChecking=no
+      root@213.192.2.119 "rm -rf /workspace/deepseek-ocr-server/app/__pycache__;
+       rm -f /workspace/debu…)
+  ⎿  Running in the background (↓ to manage)
+  ⎿  (timeout 15s)
+
+● Bash(sleep 40 && ssh -i "$HOME/.ssh/id_rsa" -p 40015 -o
+      StrictHostKeyChecking=no root@213.192.2.119 "curl -s
+      http://localhost:8000/health && echo '' && strings /work…)
+  ⎿  {
+       "status": "ok",
+       "model_loaded": true,
+     … +4 lines (ctrl+o to expand)
+  ⎿  (timeout 1m)
+
+● Server up (the module print is stale text, actual code has crop_mode=True).
+  Now the real test:
+
+● Bash(ssh -i "$HOME/.ssh/id_rsa" -p 40015 -o StrictHostKeyChecking=no
+      root@213.192.2.119 "truncate -s 0 /workspace/server.log; rm -f
+      /workspace/debug.log; time curl -…)
+  ⎿ ===DEBUG===
+    infer called: crop_mode=False, image=/tmp/deepseek_ocr_6kpgdkzb/page_00
+    00.png
+    … +30 lines (ctrl+o to expand)
+
+  ⎿  (timeout 2m)
+
+● Major finding: NO PATCHES (256 tokens vs 1120) but still 7.44s/page --
+  virtually identical to the original 7.38s with 6 crops!
+
+  This changes everything about our analysis. The bottleneck is NOT image tokens
+   or crops. It's autoregressive text generation. The model produces ~1000
+  output tokens per page regardless of input resolution, and at ~7ms/token on
+  RTX 3090, that's ~7s fixed cost per page.
+
+  Let me clean up the debug prints and give you the real options:
+
+  What we've proven:
+  - Flash attention init: no impact (was already working)
+  - Eliminating crops (1120 -> 256 tokens): no impact
+  - DPI reduction: no impact
+
+  Actual bottleneck: autoregressive decoding
+    ~7ms per output token × ~1000 tokens/page = ~7s/page
+    This is a hardware/engine limitation, not a config issue.
+
+  The only ways to speed up autoregressive decoding on this model are:
+
+  1. vLLM -- optimized serving with PagedAttention, continuous batching. Could
+  give 2-4x speedup.
+  2. INT4/INT8 quantization -- smaller model = faster decoding. ~2x speedup.
+  3. TensorRT-LLM -- NVIDIA's optimized runtime. 3-5x potential but complex
+  setup.
+  4. Switch models -- Marker/MinerU use different architectures that don't rely
+  on autoregressive decoding for the heavy lifting.
+
+  The DeepSeek-OCR-2 model fundamentally works like a vision-language LLM: it
+  "writes out" the entire page as markdown tokens one at a time. For a 735-page
+  book, that's ~735,000 tokens generated sequentially. No amount of DPI/crop
+  tuning changes this.
+
+  Want me to try vLLM as an inference backend (most likely to help), or pivot to
+   testing Marker/MinerU which use fundamentally different (non-autoregressive)
+  approaches?
+
+✻ Worked for 24m 3s
+
+● Background command "Restart server with crop_mode=False" completed (exit code
+0)
+
+● Stale notification from earlier. Already resolved.
+
+  Waiting on your call -- vLLM (optimize this model's decoding speed) or
+  Marker/MinerU (different architecture entirely)?
+
+● Background command "Force kill old server and restart" completed (exit code 0)
+
+● Stale. Waiting on your decision -- vLLM or switch to Marker/MinerU?
+
+● Background command "Clear __pycache__ and restart server" completed (exit code
+ 0)
+
+● Stale. All old server tasks are done and handled.
+
+  Your call: vLLM (try to make DeepSeek-OCR-2 faster) or Marker/MinerU (switch
+  to a non-autoregressive approach)?
+
+● Background command "Deploy with module-level print, run without --workers"
+completed (exit code 0)
+
+● Stale. All background tasks from the debugging session are cleared.
+
+  Still waiting on you -- vLLM, Marker/MinerU, or another direction?
+
+● Background command "Deploy with file debug log, restart server" completed
+(exit code 0)
+
+● Stale. All clear.
+
+● Background command "Start server and wait for model load" completed (exit code
+ 0)
+
+● Stale. All background tasks from the debugging session have drained.
+
+  Ball's in your court -- what direction do you want to take?
+
+● Background command "Start fresh server with all fixes" completed (exit code 0)
+
+● Stale. Queue's empty now.
+
+❯ is the model loaded in the GPU or the CPU? 
+
+● It's loaded to CPU first, then moved to GPU:
+
+  # Step 1: loads weights into CPU RAM
+  model = AutoModel.from_pretrained(
+      MODEL_NAME,
+      torch_dtype=torch.bfloat16,
+      ...
+  )
+  # Step 2: copies to GPU VRAM
+  _model = model.eval().cuda()
+
+  This two-step process is why the Flash Attention 2 warning said "model not
+  initialized on GPU" -- FA2 configures during from_pretrained when the model is
+   still on CPU.
+
+  Let me verify what's actually happening on the running server right now:
+
+● Bash(ssh -i "$HOME/.ssh/id_rsa" -p 40015 -o StrictHostKeyChecking=no
+      root@213.192.2.119 "nvidia-smi | grep -E 'MiB|%'; echo '---'; curl -s
+      http://localhost:8000/heal…)
+  ⎿  | 30%   31C    P8             25W /  350W |    7536MiB /  24576MiB |
+        0%      Default |
+     ---
+     … +5 lines (ctrl+o to expand)
+  ⎿  (timeout 15s)
+
+● Model is on GPU -- 7.5GB VRAM used (the 3B parameter model in bfloat16 = ~6GB
+  weights + overhead). The previous run with crops used ~15.7GB; this is much
+  less since we're not loading crop tensors.
+
+  The model weights are definitely on GPU. The slowness isn't a CPU/GPU
+  placement issue -- it's the autoregressive decode loop generating ~1000 tokens
+   per page at ~7ms/token.
+
+❯ Lets do some research on possible fixes/similar issues on the web, place  
+  findings in .\research. There has to be a solution somewhere, be          
+  resilient                                                                 
+
+● 5 Task agents launched (ctrl+o to expand)
+   ├─ Research DeepSeek-OCR-2 speed fixes
+   │  ⎿  Running in the background (shift+↑ to manage)
+   ├─ Research vLLM vision model serving
+   │  ⎿  Running in the background (shift+↑ to manage)
+   ├─ Research VLM quantization speedups
+   │  ⎿  Running in the background (shift+↑ to manage)
+   ├─ Research fast OCR alternatives deeply
+   │  ⎿  Running in the background (shift+↑ to manage)
+   └─ Research DeepSeek-OCR-2 GitHub issues
+      ⎿  Running in the background (shift+↑ to manage)
+
+● All 5 research agents are working -- digging into DeepSeek-OCR-2 specific
+  fixes, vLLM/SGLang serving, quantization, architecture comparisons, and GitHub
+   issues. I'll summarize when they finish.
+
+✻ Brewed for 44s
+
+● Agent "Research vLLM vision model serving" completed
+
+● vLLM research done -- 2-3x faster single request, 5-14x with batching.
+  DeepSeek-OCR-2 needs their forked vLLM wheel though. 1 down, 4 to go.
+
+● Agent "Research VLM quantization speedups" completed
+
+● Quantization research done -- INT4 AWQ + Marlin kernels could get us from 
+  7ms/token to 2-3ms/token. Combined with vLLM + continuous batching, that's
+  potentially a massive improvement. 2 down, 3 to go.
+
+● Agent "Research DeepSeek-OCR-2 GitHub issues" completed
+
+● Great findings -- there's a Rust/Candle implementation (deepseek-ocr.rs)
+  that's 1.88x faster, and a Kalorda project for running OCR-2 on newer vLLM.
+  Also critical: an NGram logits processor to prevent repetition loops that
+  waste tokens. 3 down, 2 to go.
+
+❯ lets see the other two before we decide 
+
+● Agreed -- waiting on the DeepSeek-OCR-2 speed fixes agent and the fast OCR
+  architecture analysis agent. I'll summarize everything once they're both in.
+
+● Agent "Research DeepSeek-OCR-2 speed fixes" completed
+
+● 4 down. Key takeaway: 4-6x recoverable software overhead from raw HuggingFace
+  Transformers. vLLM + batching + quantization could get us from 92 min to 8-18
+  min for that book. One more agent to go.
+
+❯ lets see the last one before we decide 
+
+● Waiting on the last agent -- fast OCR architecture analysis. Will summarize
+  everything once it lands.
+
+● Agent "Research fast OCR alternatives deeply" completed
+
+● All 5 research agents are in. Here's the consolidated picture:
+
+  ---
+  Why We're Slow: The Real Answer
+
+  Marker processes each text line (~20 tokens) and batches 40 lines in one GPU
+  call = 20 sequential steps. DeepSeek-OCR-2 generates the entire page 
+  (~1000-5000 tokens) autoregressively = 1000+ sequential steps. That's a 30-40x
+   structural disadvantage.
+
+  Our Options (ranked by effort vs impact)
+
+  Option A: Optimize DeepSeek-OCR-2 (stay on current model)
+  Fix: Switch to vLLM serving
+  Speedup: 3-5x
+  Effort: Medium (forked wheel needed)
+  ────────────────────────────────────────
+  Fix: INT4 AWQ + Marlin kernels
+  Speedup: 2-3x
+  Effort: Medium
+  ────────────────────────────────────────
+  Fix: Continuous batching (4-8 pages)
+  Speedup: 2-4x throughput
+  Effort: Low (vLLM handles it)
+  ────────────────────────────────────────
+  Fix: NGram logits processor (prevent loops)
+  Speedup: Variable
+  Effort: Low
+  ────────────────────────────────────────
+  Fix: Combined estimate
+  Speedup: ~0.7-1.5 pages/sec
+  Effort:
+  ────────────────────────────────────────
+  Fix: 735-page book
+  Speedup: ~8-18 min
+  Effort:
+  Option B: Switch to Marker
+  ┌──────────────────────────┬─────────────────────────────────────────────────┐
+  │          Metric          │                      Value                      │
+  ├──────────────────────────┼─────────────────────────────────────────────────┤
+  │ Estimated RTX 3090 speed │ 5-15 pages/sec                                  │
+  ├──────────────────────────┼─────────────────────────────────────────────────┤
+  │ 735-page book            │ ~1-2 min                                        │
+  ├──────────────────────────┼─────────────────────────────────────────────────┤
+  │ Effort                   │ Server rewrite (Python, pip install marker-pdf) │
+  ├──────────────────────────┼─────────────────────────────────────────────────┤
+  │ License                  │ GPL-3.0 + commercial limits above $2M           │
+  ├──────────────────────────┼─────────────────────────────────────────────────┤
+  │ Quality                  │ 95.67 heuristic score (best in benchmarks)      │
+  └──────────────────────────┴─────────────────────────────────────────────────┘
+  Option C: Switch to MinerU 2.5
+  ┌──────────────────────────┬───────────────────────────────────┐
+  │          Metric          │               Value               │
+  ├──────────────────────────┼───────────────────────────────────┤
+  │ Estimated RTX 3090 speed │ 1.0-1.5 pages/sec                 │
+  ├──────────────────────────┼───────────────────────────────────┤
+  │ 735-page book            │ ~8-12 min                         │
+  ├──────────────────────────┼───────────────────────────────────┤
+  │ Effort                   │ Server rewrite                    │
+  ├──────────────────────────┼───────────────────────────────────┤
+  │ License                  │ AGPL-3.0 (restrictive)            │
+  ├──────────────────────────┼───────────────────────────────────┤
+  │ Quality                  │ 90.67 OmniDocBench (beats GPT-4o) │
+  └──────────────────────────┴───────────────────────────────────┘
+  Option D: deepseek-ocr.rs (Rust native)
+  ┌─────────────────────┬────────────────────────────────────────┐
+  │       Metric        │                 Value                  │
+  ├─────────────────────┼────────────────────────────────────────┤
+  │ Speedup over Python │ 1.88x decode, 97x tokenization         │
+  ├─────────────────────┼────────────────────────────────────────┤
+  │ Maturity            │ Alpha, CUDA support early              │
+  ├─────────────────────┼────────────────────────────────────────┤
+  │ Effort              │ High (integrate Candle/Rust inference) │
+  └─────────────────────┴────────────────────────────────────────┘
+  ---
+  My read: Option A gets us to "acceptable" (8-18 min/book) with moderate
+  effort. Option B (Marker) gets us to "fast" (1-2 min/book) but requires a
+  server rewrite. The Rust client stays the same either way -- just the server
+  endpoint changes.
+
+  What's your call?
+
+❯ Lets Update Claude.md, README.md, Useage.md, and add an entry to          
+  Changelog.md, create commit, then sync with github first.                 
+
+● Let me read the current docs first.
+
+● Recalled 1 memory, read 3 files (ctrl+o to expand)
+
+● Now let me update all four files to reflect the current state -- model API
+  fixes, deployment testing, performance investigation, and research findings.
+
+● Wrote 2 memories (ctrl+o to expand)
+
+● Update(README.md)
+  ⎿  Added 1 line, removed 1 line
+      1  # DeepSeek-OCR PDF2Markdown                                     
+      2                                                                  
+      3 -A Rust-based CLI tool with a live TUI dashboard that            
+        -batch-converts PDF documents to Markdown using the              
+        -DeepSeek-OCR-2-3B vision model running on a GPU server.         
+      3 +A Rust-based CLI tool with a live TUI dashboard that            
+        +batch-converts PDF documents to Markdown using the              
+        +DeepSeek-OCR-2 vision-language model (3B params)                
+        +running on a GPU server.                                        
+      4                                                                  
+      5  ## How It Works                                                 
+      6                                                                  
+
+● Update(README.md)
+  ⎿  Added 1 line, removed 1 line
+      19                                                                 
+      20  1. **Scanner** walks input directories for `.pdf` files,       
+          skipping any with existing `.md` output                        
+      21  2. **Workers** (configurable count) pull PDFs from a channel   
+          and upload them to the API server                              
+      22 -3. **Server** converts each PDF page to a 144 DPI              
+         -image, runs DeepSeek-OCR inference                             
+         -, and returns combined Markdown                                
+      22 +3. **Server** converts each PDF page to a PNG                  
+         +image, runs DeepSeek-OCR-2 inference per page                  
+         +, and returns combined Markdown                                
+      23  4. **TUI** displays real-time worker status, progress bar,     
+          file results, and statistics                                   
+      24                                                                 
+      25  ## Requirements                                                
+
+● Update(README.md)
+  ⎿  Added 4 lines
+      135  - **Two-stage shutdown**: First Ctrl+C finishes current work  
+           gracefully; second forces immediate exit.                     
+      136  - **Retry with backoff**: Failed API calls retry up to 3      
+           times with exponential backoff (1s, 2s, 4s).                  
+      137                                                                
+      138 +## Performance Notes                                          
+      139 +                                                              
+      140 +Current inference speed on RTX 3090 is ~7.5 seconds per page  
+          +(limited by autoregressive text generation). The `research/`  
+          +directory contains detailed analysis of the bottleneck and    
+          +comparisons with alternative OCR tools (Marker, MinerU,       
+          +Docling, etc.). Optimization paths under investigation        
+          +include vLLM serving, INT4 quantization, and alternative OCR  
+          +architectures.                                                
+      141 +                                                              
+      142  ## License                                                    
+      143                                                                
+      144  MIT                                                           
+
+● Update(Usage.md)
+  ⎿  Added 6 lines, removed 4 lines
+      65  ### On Runpod                                                  
+      66                                                                 
+      67  1. Create a GPU pod (RTX 3090 / A5000 / A6000 with 24GB+ VRAM) 
+      68 -2. Upload the `server/` directory to                           
+         -`/workspace/deepseek-ocr-server/`                              
+      69 -3. Run the startup script:                                     
+      68 +2. Set **Volume Mount Path** to `/workspace` for persistent    
+         +storage                                                        
+      69 +3. Expose **TCP port 8000** in the pod config for direct API   
+         +access                                                         
+      70 +4. Upload the `server/` directory to                           
+         +`/workspace/deepseek-ocr-server/`                              
+      71 +5. Run the startup script:                                     
+      72                                                                 
+      73  ```bash                                                        
+      74  cd /workspace/deepseek-ocr-server                              
+     ...
+      74  ./start.sh                                                     
+      75  ```                                                            
+      76                                                                 
+      77 -4. The first run downloads the model (~6GB). Subsequent starts 
+         - use the cached model.                                         
+      78 -5. The server listens on port 8000. Use the Runpod proxy URL   
+         -for external access.                                           
+      77 +6. First run creates a venv at `/workspace/venv/`, installs    
+         +deps, and downloads the model to                               
+         +`/workspace/models/DeepSeek-OCR-2/` (~6GB). Subsequent starts  
+         +skip these steps.                                              
+      78 +7. The server listens on port 8000. Use the direct TCP port    
+         +(e.g., `213.192.x.x:40016`) for fastest access, or the Runpod  
+         +proxy URL.                                                     
+      79                                                                 
+      80  ### Health Check                                               
+      81                                                                 
+
+● Update(Usage.md)
+  ⎿  Added 14 lines
+      116  RUST_LOG=debug deepseek-ocr-pdf2md -i ./docs --api-url ...    
+      117  ```                                                           
+      118                                                                
+      119 +## Performance                                                
+      120 +                                                              
+      121 +Current inference speed on RTX 3090: **~8 pages/minute**      
+          +(~7.5s per page). This is bounded by autoregressive text      
+          +generation in the vision-language model.                      
+      122 +                                                              
+      123 +| Document Size | Approximate Time |                          
+      124 +|---------------|-----------------|                           
+      125 +| 10 pages | ~1.3 min |                                       
+      126 +| 100 pages | ~12.5 min |                                     
+      127 +| 500 pages | ~62 min |                                       
+      128 +                                                              
+      129 +The `research/` directory in the repo contains detailed       
+          +performance analysis and optimization paths (vLLM,            
+          +quantization, alternative models).                            
+      130 +                                                              
+      131  ## Troubleshooting                                            
+      132                                                                
+      133  | Issue | Solution |                                          
+     ...
+      124  | `Request timed out after 300s` | Large PDFs may exceed the  
+           5-minute timeout. The tool retries up to 3 times              
+           automatically. |                                              
+      125  | `GPU out of memory` | Server returns partial results for    
+           completed pages. Reduce PDF page size or restart the server   
+           pod. |                                                        
+      126  | `0 PDFs found` | Check input directory path and ensure PDFs 
+            have `.pdf` extension. Use `-r` for nested directories. |    
+      127 +| Server won't start after crash | GPU memory may be held by  
+          +zombie processes. Restart the Runpod pod to clear VRAM. |     
+      128 +| Stale code after SCP update | Delete `app/__pycache__/` and 
+          + restart uvicorn. |                                           
+
+● Now update the changelog:
+
+● Update(CHANGELOG.md)
+  ⎿  Added 21 lines
+       5  The format is based on [Keep a                                 
+          Changelog](https://keepachangelog.com/en/1.1.0/),              
+       6  and this project adheres to [Semantic                          
+          Versioning](https://semver.org/spec/v2.0.0.html).              
+       7                                                                 
+       8 +## [0.1.1] - 2026-02-06                                        
+       9 +                                                               
+      10 +### Fixed                                                      
+      11 +- Corrected model API: use `AutoModel` with built-in           
+         +`model.infer()` instead of `AutoModelForCausalLM` with manual  
+         +`generate()`                                                   
+      12 +- Fixed model name from `DeepSeek-OCR-2-3B` to                 
+         +`DeepSeek-OCR-2`                                               
+      13 +- Fixed dtype from `float16` to `bfloat16` and attention param 
+         + from `attn_implementation` to `_attn_implementation`          
+      14 +- Fixed `model.infer()` crash on `output_path=""` by using     
+         +`tempfile.TemporaryDirectory`                                  
+      15 +- Added `torch_dtype=torch.bfloat16` to `from_pretrained()`    
+         +for proper Flash Attention 2 initialization                    
+      16 +                                                               
+      17 +### Changed                                                    
+      18 +- Server deployment now uses persistent `/workspace/` paths    
+         +(venv, model, server code) instead of ephemeral container disk 
+      19 +- `start.sh` is now idempotent: skips venv creation and model  
+         +download if already present                                    
+      20 +- Added per-page timing instrumentation to `/convert` endpoint 
+      21 +- Reduced default PDF render DPI from 144 to 68 to avoid       
+         +unnecessary image cropping                                     
+      22 +                                                               
+      23 +### Added                                                      
+      24 +- Performance research and analysis in `research/` directory   
+      25 +- Detailed comparisons of OCR alternatives: Marker, MinerU,    
+         +Docling, Surya, Nougat, GOT-OCR, Mistral OCR                   
+      26 +- Speed benchmarks, architecture analysis, vLLM serving        
+         +research, quantization optimization paths                      
+      27 +- Root cause analysis: autoregressive decoding is the primary  
+         +bottleneck (~7ms/token on RTX 3090)                            
+      28 +                                                               
+      29  ## [0.1.0] - 2026-02-05                                        
+      30                                                                 
+      31  ### Added                                                      
+
+● Good. Now let me also clean up the debug prints from model.py before
+  committing:
+
+● Read 1 file (ctrl+o to expand)
+
+● Update(server\app\model.py)
+  ⎿  Removed 1 line
+       8  from transformers import AutoModel, AutoTokenizer              
+       9                                                                 
+      10  logger = logging.getLogger(__name__)                           
+      11 -print("[MODEL.PY] Module loaded - crop_mode will be False",    
+         -flush=True)                                                    
+      11                                                                 
+      12  MODEL_NAME = "/workspace/models/DeepSeek-OCR-2"                
+      13  PROMPT = "<image>\n<|grounding|>Convert the document to        
+          markdown."                                                     
+
+● Update(server\app\model.py)
+  ⎿  Removed 3 lines
+      45      assert _model is not None and _tokenizer is not None,      
+          "Model not loaded"                                             
+      46                                                                 
+      47      with tempfile.TemporaryDirectory(prefix="ocr_out_") as     
+          tmp_dir:                                                       
+      48 -        print(f"[DEBUG] calling infer with crop_mode=False,    
+         -image_size=768, base_size=1024", flush=True)                   
+      49 -        with open("/workspace/debug.log", "a") as _dbg:        
+      50 -            _dbg.write(f"infer called: crop_mode=False,        
+         -image={image_path}\n")                                         
+      48          with torch.inference_mode():                           
+      49              result = _model.infer(                             
+      50                  _tokenizer,                                    
+
+● Now commit and push:
+
+● Bash(cd "E:\Workspace.Dev.Rust\DeepseekOCR_PDF2Markdown" && git status -u)
+  ⎿  On branch master
+     Your branch is up to date with 'origin/master'.
+     … +57 lines (ctrl+o to expand)
+
+● Bash(cd "E:\Workspace.Dev.Rust\DeepseekOCR_PDF2Markdown" && git diff --stat)
+  ⎿   CHANGELOG.md               | 21 +++++++++++++++++++++
+      CLAUDE.md                  | 24 ++++++++++++++++++++++--
+      README.md                  |  8 ++++++--
+     … +22 lines (ctrl+o to expand)
+
+● Bash(cd "E:\Workspace.Dev.Rust\DeepseekOCR_PDF2Markdown" && git log --oneline
+      -5)
+  ⎿  b4e61c8 fix: use correct DeepSeek-OCR-2 model API for inference
+     e519416 init commit
+
+● Bash(cd "E:\Workspace.Dev.Rust\DeepseekOCR_PDF2Markdown" && git add
+      CHANGELOG.md CLAUDE.md README.md Usage.md server/app/main.py
+      server/app/model.py server/app/pdf_p…)
+  ⎿ warning: in the working copy of 'CHANGELOG.md', LF will be replaced by
+    CRLF the next time Git touches it
+    warning: in the working copy of 'CLAUDE.md', LF will be replaced by CRL
+    … +33 lines (ctrl+o to expand)
+
+
+● Bash(cd "E:\Workspace.Dev.Rust\DeepseekOCR_PDF2Markdown" && git commit -m "fix
+       server deployment, add performance research and docs update…)
+  ⎿ [master 31ac1d7] fix server deployment, add performance research and do
+    cs update
+     18 files changed, 3935 insertions(+), 29 deletions(-)
+    … +10 lines (ctrl+o to expand)
+
+
+● Bash(cd "E:\Workspace.Dev.Rust\DeepseekOCR_PDF2Markdown" && git push origin
+      master)
+  ⎿ To https://github.com/KennethJefferson/ccg_app_rust_DeepseekOCR_PDF2Mar
+    kdown.git
+       b4e61c8..31ac1d7  master -> master
+
+
+● Done. Committed 31ac1d7 and pushed to GitHub:
+
+  - 18 files changed, 3935 insertions
+  - Server fixes (model API, deployment, DPI, timing)
+  - 10 research markdown files
+  - Updated CLAUDE.md, README.md, Usage.md, CHANGELOG.md (v0.1.1)
+
+✻ Baked for 2m 19s

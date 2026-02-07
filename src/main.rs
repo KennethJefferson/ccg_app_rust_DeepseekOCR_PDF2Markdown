@@ -10,6 +10,7 @@ mod types;
 mod worker;
 
 use std::path::PathBuf;
+use std::time::Instant;
 
 use clap::Parser;
 use tracing::info;
@@ -18,6 +19,7 @@ use cli::Cli;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    let app_start = Instant::now();
     let cli = Cli::parse();
 
     // Determine log directory
@@ -49,16 +51,19 @@ async fn main() -> anyhow::Result<()> {
     }
 
     // Scan for PDFs
+    let scan_start = Instant::now();
     let scan_result = scanner::scan_directories(
         &cli.input,
         cli.recursive,
         cli.output.as_deref(),
     )?;
+    let scan_elapsed = scan_start.elapsed();
 
     info!(
         found = scan_result.total_found,
         queued = scan_result.queue.len(),
         skipped = scan_result.skipped,
+        scan_ms = scan_elapsed.as_millis() as u64,
         "Scan complete"
     );
 
@@ -70,6 +75,7 @@ async fn main() -> anyhow::Result<()> {
         scan_result.skipped,
         num_workers,
         &cli.api_url,
+        app_start,
     )
     .await?;
 

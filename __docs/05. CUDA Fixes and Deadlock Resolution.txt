@@ -1,0 +1,82 @@
+# Session Export: CUDA Fixes and Deadlock Resolution
+
+## Date: 2026-02-06
+
+## Context
+Continued from session "04. Parallel Processing - Works for 2 workers". Server running on RunPod RTX 3090 with 4 uvicorn workers. Testing with 5-13 PDF files.
+
+## Changes Made
+
+### 1. Deadlock Fix (app.rs)
+**Bug**: Client hung forever after all work completed. `work_txs` (channel senders) were cloned into the distributor task but originals were held in the main loop. When distributor finished and dropped clones, workers' `recv()` never returned `None` because original senders still alive.
+
+**Fix**: Move `work_txs` into distributor task instead of cloning. Channels now close when distribution completes, workers exit, client terminates properly.
+
+### 2. Server CUDA Error Recovery (main.py)
+**Bug**: CUDA device-side assert corrupts a worker's GPU context permanently. Our exception handler kept the zombie worker alive, leaking VRAM and failing all future requests.
+
+**Fix**: Detect fatal CUDA errors (`device-side assert`, `CUDA error`, `CUDA out of memory`) and call `os._exit(1)` to kill the worker. Uvicorn's process manager automatically restarts it with a fresh CUDA context.
+
+### 3. VRAM Fragmentation Mitigation (start.sh)
+Added `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` to reduce PyTorch memory allocator fragmentation across multiple conversions.
+
+### 4. Cleanup Pipeline (start.sh + main.py)
+- **Startup**: start.sh kills stale processes, verifies port free, clears __pycache__, removes orphaned `/tmp/marker_*.pdf` files
+- **Per-conversion**: `torch.cuda.empty_cache()` after each conversion (model.py)
+- **On failure**: `torch.cuda.empty_cache()` in exception handler (main.py)
+- **Worker restart**: Temp file cleanup before `os._exit(1)` on CUDA errors
+
+### 5. Client Timeout Increase (api_client.rs)
+Increased from 300s to 600s. 300s was too tight for large PDFs over WAN (28 MB upload alone can take 200s+).
+
+### 6. Client Retry on Server CUDA Errors (api_client.rs)
+Previously, server errors (success=false) were never retried because the HTTP request succeeded (200 OK). Now, transient CUDA errors are retried - the worker self-kills on CUDA errors, uvicorn restarts it, and the retry hits the fresh worker.
+
+### 7. CLAUDE.md Updates
+Updated to reflect current architecture (uvicorn workers, not thread pool), correct env vars, CUDA error handling behavior.
+
+## Test Results
+
+### Test 1: 5 PDFs, 4 workers (with deadlock fix, before CUDA fixes)
+- 0 completed (all failed - WAN upload corruption)
+- Client exited cleanly (deadlock fix confirmed)
+
+### Test 2: 5 PDFs via localhost (SCP to pod + curl/python)
+- 4/5 succeeded (Applied AI 431p, MEAP 02 367p, MEAP V03 398p, Fluent C 296p)
+- 1 failed: Artificial Neural Networks - PDFium Data Format Error (PDF itself incompatible)
+
+### Test 3: 13 PDFs, 4 workers (full client run)
+- 4/13 completed, 9 failed, 1898.4s elapsed, client exited cleanly
+- Successes: Desktop Linux x2, AI and Ada, Intro Deep RL
+- Failures by cause:
+  - CUDA device-side assert: 2 (AI Engineering, Advances in Deep Generative Models)
+  - CUDA OOM: 2 (Agentic AI, Artificial Neural Networks) - cascade from corrupted workers
+  - Request timeout 300s: 2 (100 C++ Mistakes, Acing Kubernetes)
+  - Connection error: 2 (AI Agents, AI-Driven Software Testing) - after CUDA crashes
+  - Marker bug: 1 (Algorithm Software - NoneType input_ids)
+
+## Key Findings
+
+### CUDA Error Cascade
+Once one worker hits device-side assert, it holds leaked VRAM (~6 GB) with a corrupted context. Remaining workers get less headroom, leading to OOM. OOM further corrupts contexts. Domino effect takes down all 4 workers.
+
+### PDFium Incompatibility
+`Failed to load document (PDFium: Data format error)` is NOT network corruption. Confirmed by testing same files via localhost. These PDFs are genuinely incompatible with PDFium.
+
+### WAN Bottleneck
+Upload speed to RunPod over WAN is ~1-2 Mbps for large files. 4 concurrent uploads saturate the link. Connection drops are common. Localhost testing (SCP + curl) bypasses this entirely.
+
+## Files Modified
+- `src/app.rs` - Deadlock fix (move work_txs into distributor)
+- `src/api_client.rs` - 600s timeout, retry transient CUDA server errors
+- `server/app/main.py` - CUDA error detection, worker self-kill, temp cleanup on startup
+- `server/app/model.py` - torch.cuda.empty_cache() after each conversion (from prior session)
+- `server/start.sh` - PYTORCH_CUDA_ALLOC_CONF, temp file cleanup
+- `CLAUDE.md` - Updated architecture docs
+- `research/troubleshooting_cuda_marker.md` - New troubleshooting guide
+
+## Next Steps
+- Deploy updated server files to RunPod
+- Run test with CUDA fixes (workers should auto-restart on CUDA errors)
+- Consider reducing to 3 workers for more VRAM headroom
+- Client retries should now recover from transient CUDA failures

@@ -18,6 +18,7 @@ pub async fn run(
     skipped: usize,
     num_workers: usize,
     api_url: &str,
+    app_start: Instant,
 ) -> anyhow::Result<()> {
     if queue.is_empty() {
         info!("No PDFs to process.");
@@ -28,8 +29,12 @@ pub async fn run(
     let api_client = Arc::new(ApiClient::new(api_url)?);
 
     // Health check
+    let health_start = Instant::now();
     match api_client.health_check().await {
-        Ok(true) => info!("API server is healthy"),
+        Ok(true) => {
+            let health_ms = health_start.elapsed().as_millis();
+            info!(health_check_ms = health_ms as u64, "API server is healthy");
+        }
         Ok(false) => {
             anyhow::bail!("API server returned unhealthy status");
         }
@@ -65,7 +70,8 @@ pub async fn run(
     drop(event_tx); // Drop our copy so channel closes when all workers done
 
     // Send work items round-robin to workers
-    let work_txs_clone = work_txs.clone();
+    // Move senders into the distributor so they're dropped when distribution completes,
+    // signaling workers there's no more work (fixes deadlock where main loop held senders)
     let graceful_flag = shutdown.graceful.clone();
     tokio::spawn(async move {
         let mut worker_idx = 0;
@@ -73,14 +79,13 @@ pub async fn run(
             if graceful_flag.load(std::sync::atomic::Ordering::Relaxed) {
                 break;
             }
-            let tx = &work_txs_clone[worker_idx % work_txs_clone.len()];
+            let tx = &work_txs[worker_idx % work_txs.len()];
             if tx.send(item).await.is_err() {
                 break;
             }
             worker_idx += 1;
         }
-        // Drop all senders to signal workers there's no more work
-        drop(work_txs_clone);
+        // work_txs dropped here, closing all worker channels
     });
 
     // Initialize TUI
@@ -109,6 +114,7 @@ pub async fn run(
 
     let mut tick: usize = 0;
     let mut workers_finished = 0;
+    let mut first_processing_logged = false;
 
     loop {
         // Render
@@ -134,6 +140,13 @@ pub async fn run(
                         tick += 1;
                     }
                     AppEvent::Worker(worker_event) => {
+                        if !first_processing_logged {
+                            if matches!(worker_event, WorkerEvent::Started { .. }) {
+                                let startup_ms = app_start.elapsed().as_millis();
+                                info!(startup_to_first_processing_ms = startup_ms as u64, "First PDF started processing");
+                                first_processing_logged = true;
+                            }
+                        }
                         handle_worker_event(&mut state, worker_event, &mut workers_finished);
                     }
                 }
@@ -160,8 +173,8 @@ pub async fn run(
 
         if shutdown.is_graceful() {
             state.shutdown_requested = true;
-            // Drop work senders to stop feeding workers
-            work_txs.clear();
+            // Workers will stop when distributor breaks on graceful_flag
+            // and drops the work channel senders
         }
     }
 

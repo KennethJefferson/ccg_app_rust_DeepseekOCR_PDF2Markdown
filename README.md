@@ -19,7 +19,7 @@ PDF files on disk                          Runpod GPU Server
 
 1. **Scanner** walks input directories for `.pdf` files, skipping any with existing `.md` output
 2. **Workers** (1-4, default 2) pull PDFs from a channel and upload them to the API server
-3. **Server** runs a pool of Marker model instances (configurable, default 4) for parallel conversion
+3. **Server** runs N uvicorn worker processes (configurable, default 4), each with its own Marker model and CUDA context
 4. **TUI** displays real-time worker status, progress bar, file results, and statistics
 
 ## Requirements
@@ -92,8 +92,8 @@ pdf2md -i ./docs -r -w 4 -o ./markdown_output --api-url https://<pod-id>-8000.pr
 
 | Endpoint | Method | Description |
 |----------|--------|-------------|
-| `/convert` | POST | Multipart upload of PDF, returns `{ success, markdown, pages_processed, error? }` |
-| `/health` | GET | Returns `{ status, model_loaded, gpu_available, pool_size }` |
+| `/convert` | POST | Multipart upload of PDF, returns `{ success, markdown, pages_processed, error? }`. Accepts `X-File-MD5` header for integrity verification. |
+| `/health` | GET | Returns `{ status, model_loaded, gpu_available }` |
 
 ## Project Structure
 
@@ -106,7 +106,7 @@ pdf2md -i ./docs -r -w 4 -o ./markdown_output --api-url https://<pod-id>-8000.pr
 │   ├── scanner.rs        # PDF discovery + collision handling
 │   ├── types.rs          # Core data structures
 │   ├── error.rs          # Error types
-│   ├── api_client.rs     # HTTP client with retry logic
+│   ├── api_client.rs     # HTTP client with MD5 integrity + retry logic
 │   ├── worker.rs         # Async worker tasks
 │   ├── app.rs            # Orchestration + event loop
 │   ├── shutdown.rs       # Ctrl+C handler
@@ -118,8 +118,8 @@ pdf2md -i ./docs -r -w 4 -o ./markdown_output --api-url https://<pod-id>-8000.pr
 │       └── widgets.rs    # Custom TUI components
 └── server/
     ├── app/
-    │   ├── main.py       # FastAPI application
-    │   ├── model.py      # Marker model pool + parallel conversion
+    │   ├── main.py       # FastAPI application + CUDA error recovery + MD5 verification
+    │   ├── model.py      # Single PdfConverter per worker + ThreadPoolExecutor
     │   └── schemas.py    # Response models
     ├── requirements.txt
     └── start.sh          # Server startup script
@@ -129,22 +129,25 @@ pdf2md -i ./docs -r -w 4 -o ./markdown_output --api-url https://<pod-id>-8000.pr
 
 - **No shared mutable state**: Workers send events through channels. The main loop is the sole owner of `AppState`.
 - **Whole-PDF conversion**: Marker processes entire PDFs at once (no per-page loop).
-- **Model pool**: Server loads multiple Marker instances into an async queue for parallel GPU inference. Configurable via `MARKER_POOL_SIZE` env var (default 4).
+- **Process isolation**: Server uses uvicorn worker processes (not threads). Each worker has its own PdfConverter and CUDA context, preventing cross-worker contamination. Configurable via `MARKER_WORKERS` env var (default 4).
+- **CUDA error recovery**: Fatal GPU errors (device-side assert, OOM) cause the worker to self-kill; uvicorn auto-restarts it with a fresh CUDA context. Client retries transparently.
+- **Upload integrity**: Client computes MD5 hash of PDF bytes and sends it as `X-File-MD5` header. Server verifies before processing, rejecting corrupted uploads. Client retries on corruption.
 - **Pipeline parallelism**: Client workers overlap network I/O with server-side GPU processing — while one PDF is converting, the next is uploading.
 - **Pre-existence check**: Already-converted PDFs are skipped before queuing.
 - **Auto-rename on collision**: When using `-o`, duplicate filenames get `_1`, `_2` suffixes.
 - **Two-stage shutdown**: First Ctrl+C finishes current work gracefully; second forces immediate exit.
-- **Retry with backoff**: Failed API calls retry up to 3 times with exponential backoff (1s, 2s, 4s).
+- **Retry with backoff**: Failed API calls retry up to 3 times with exponential backoff (2s, 4s, 8s). Retries cover timeouts, connection errors, CUDA crashes, and upload corruption.
 
 ## Performance
 
-Using Marker on RTX 3090 with 4 model instances: **~0.4-0.5s per page per instance**. With 4 workers saturating the pool, throughput scales near-linearly up to the GPU's compute limit.
+Using Marker on RTX 3090 with uvicorn workers: **~0.5-1.0s per page** depending on PDF complexity. Tested with 13 PDFs (1,700+ total pages), 77% success rate with automatic retry and recovery.
 
-| Setup | Throughput (est.) |
-|-------|------------------|
-| 1 worker, 1 instance | ~150 pages/min |
-| 2 workers, 2 instances | ~280 pages/min |
-| 4 workers, 4 instances | ~500 pages/min (GPU-bound) |
+| Setup | VRAM (idle) | Throughput (est.) |
+|-------|-------------|------------------|
+| 1 worker | ~3.5 GB | ~80 pages/min |
+| 2 workers | ~7 GB | ~150 pages/min |
+| 3 workers (recommended) | ~10.5 GB | ~200 pages/min |
+| 4 workers | ~14 GB | ~250 pages/min (OOM risk on large PDFs) |
 
 ## License
 

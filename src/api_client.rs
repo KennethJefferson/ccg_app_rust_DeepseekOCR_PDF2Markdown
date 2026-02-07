@@ -1,13 +1,14 @@
 use std::path::Path;
 use std::time::Duration;
 
+use md5::{Md5, Digest};
 use reqwest::{multipart, Client};
 use tracing::{debug, warn};
 
 use crate::error::ApiError;
 use crate::types::ApiResponse;
 
-const REQUEST_TIMEOUT: Duration = Duration::from_secs(300); // 5 min per PDF
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(600); // 10 min per PDF (upload + processing)
 const MAX_RETRIES: u32 = 3;
 
 pub struct ApiClient {
@@ -46,7 +47,18 @@ impl ApiClient {
             }
 
             match self.try_convert(&pdf_bytes, &filename).await {
-                Ok(resp) => return Ok(resp),
+                Ok(resp) => {
+                    // Retry transient server errors (CUDA OOM, worker crashes)
+                    // The worker self-kills on these, uvicorn restarts it
+                    if !resp.success && is_transient_server_error(&resp) {
+                        debug!(attempt, error = ?resp.error, "Transient server error, retrying");
+                        last_error = Some(ApiError::Server(
+                            resp.error.unwrap_or_else(|| "Unknown server error".into()),
+                        ));
+                        continue;
+                    }
+                    return Ok(resp);
+                }
                 Err(e) => {
                     if !is_retryable(&e) {
                         return Err(e);
@@ -65,6 +77,8 @@ impl ApiClient {
         pdf_bytes: &[u8],
         filename: &str,
     ) -> Result<ApiResponse, ApiError> {
+        let md5_hash = format!("{:x}", Md5::digest(pdf_bytes));
+
         let part = multipart::Part::bytes(pdf_bytes.to_vec())
             .file_name(filename.to_string())
             .mime_str("application/pdf")
@@ -76,6 +90,7 @@ impl ApiClient {
         let response = self
             .client
             .post(&url)
+            .header("X-File-MD5", &md5_hash)
             .multipart(form)
             .send()
             .await
@@ -110,4 +125,17 @@ impl ApiClient {
 
 fn is_retryable(error: &ApiError) -> bool {
     matches!(error, ApiError::Timeout(_) | ApiError::Request(_))
+}
+
+fn is_transient_server_error(resp: &ApiResponse) -> bool {
+    let err = match &resp.error {
+        Some(e) => e.as_str(),
+        None => return false,
+    };
+    // CUDA errors are transient because the server worker self-kills and
+    // uvicorn restarts it with a fresh CUDA context.
+    // Upload corruption is transient - retry may succeed with intact data.
+    err.contains("CUDA")
+        || err.contains("device-side assert")
+        || err.contains("Upload corrupted")
 }

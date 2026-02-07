@@ -5,6 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] - 2026-02-06
+
+### Changed
+- **Server architecture**: Replaced single-process model pool with uvicorn multi-worker processes. Each worker has its own PdfConverter and CUDA context, providing full process isolation.
+- **Server worker count**: Controlled via `MARKER_WORKERS` env var (default 4). Recommend 3 for RTX 3090.
+- Client timeout increased from 300s to 600s to accommodate large PDFs over WAN
+- Retry logic now covers transient CUDA errors (OOM, device-side assert) and upload corruption
+- Removed `pool_size` from `/health` response (no longer applicable with process-based workers)
+
+### Added
+- **CUDA error recovery**: Server workers detect fatal CUDA errors and call `os._exit(1)`. Uvicorn auto-restarts them with a fresh CUDA context, preventing the cascade where one corrupted worker's leaked VRAM causes OOM in others.
+- **MD5 upload integrity verification**: Client sends `X-File-MD5` header with hex digest; server rejects mismatched uploads with "Upload corrupted" error. Client retries on corruption.
+- **VRAM fragmentation mitigation**: `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` set in `start.sh`
+- **Startup cleanup pipeline**: `start.sh` kills stale processes, verifies port free, clears `__pycache__`, removes orphaned `/tmp/marker_*.pdf`
+- **Per-conversion cleanup**: `torch.cuda.empty_cache()` after each conversion and on failure
+- Troubleshooting guide at `research/troubleshooting_cuda_marker.md`
+
+### Fixed
+- **Client deadlock**: `work_txs` channel senders were cloned into the distributor task but originals held in the main loop, preventing channels from closing. Workers blocked on `recv()` forever after all work completed. Fix: move `work_txs` into the distributor task so channels close when distribution completes.
+
 ## [0.3.0] - 2026-02-06
 
 ### Added

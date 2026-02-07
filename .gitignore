@@ -35,3 +35,8 @@ env/
 # OS
 Thumbs.db
 desktop.ini
+nul
+
+# Test data
+__pdfs/
+__pdfs_backup/

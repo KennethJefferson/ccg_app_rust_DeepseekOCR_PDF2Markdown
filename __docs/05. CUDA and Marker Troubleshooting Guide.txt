@@ -1,0 +1,742 @@
+# CUDA and Marker-PDF Troubleshooting Guide
+
+Production deployment on RTX 3090 (24GB VRAM) with FastAPI + uvicorn.
+
+---
+
+## Table of Contents
+
+1. [CUDA Device-Side Assert Triggered](#1-cuda-device-side-assert-triggered)
+2. [CUDA OOM with Multiple Workers](#2-cuda-oom-with-multiple-workers)
+3. [Marker Bug: NoneType / input_ids](#3-marker-bug-nonetype--input_ids)
+4. [Marker Bug: PDFium Data Format Error](#4-marker-bug-pdfium-data-format-error)
+5. [Best Practices for Marker in Production](#5-best-practices-for-marker-in-production)
+6. [Recommended Server Configuration](#6-recommended-server-configuration)
+
+---
+
+## 1. CUDA Device-Side Assert Triggered
+
+### What It Is
+
+A CUDA device-side assert is an unrecoverable GPU error. When a CUDA kernel hits an invalid operation (out-of-bounds index, NaN where not expected, tensor shape mismatch), the GPU triggers an assert at the hardware level. Once this happens, **the entire CUDA context for that process is permanently corrupted**. Every subsequent CUDA call in that process will fail.
+
+### Why It Happens in Marker/Surya
+
+Marker uses surya models (detection, recognition, table recognition) that run CUDA kernels. Common triggers:
+
+- **Corrupted PDF input** producing unexpected tensor shapes during OCR
+- **Large/unusual page dimensions** causing index-out-of-bounds in attention layers
+- **Memory pressure** causing allocation failures mid-kernel
+- **Surya's SDPA implementation** on older GPU architectures (pre-Ampere) had a known bug causing excessive memory use, which could cascade into asserts (fixed in marker >= 1.7.3)
+
+### Can You Recover?
+
+**No.** This is a hard limitation at the CUDA driver level.
+
+From PyTorch core team (pytorch/pytorch#44624):
+> "No, there's no way we can safely recover context after an illegal memory access."
+> "This is a limitation on the CUDA side: cuda asserts cannot be recovered at the cuda driver level."
+
+Once triggered, you cannot:
+- Run any more CUDA operations in that process
+- Call `torch.cuda.empty_cache()`
+- Even call `torch.cuda.is_available()` reliably
+
+### Detection and Mitigation Strategy
+
+Since you cannot recover, the strategy is **detect and restart the worker process**.
+
+#### Option A: Single-Worker Uvicorn with Gunicorn Process Manager
+
+Use gunicorn as a process manager with uvicorn workers. Gunicorn will automatically restart crashed workers:
+
+```bash
+# In start.sh
+"$VENV/bin/gunicorn" app.main:app \
+    --worker-class uvicorn.workers.UvicornWorker \
+    --workers 1 \
+    --bind 0.0.0.0:8000 \
+    --max-requests 100 \
+    --max-requests-jitter 20 \
+    --timeout 600 \
+    --graceful-timeout 30
+```
+
+- `--max-requests 100` restarts worker after 100 conversions (prevents memory leaks)
+- `--max-requests-jitter 20` adds randomness to prevent synchronized restarts
+- `--timeout 600` allows 10 minutes for large PDFs before killing the worker
+- If the worker crashes from a CUDA assert, gunicorn spawns a new one automatically
+
+#### Option B: Wrap Conversion in a Subprocess
+
+Run each conversion (or batch) in a separate `subprocess` so CUDA context corruption doesn't take down the main server:
+
+```python
+import subprocess
+import sys
+import json
+import tempfile
+import os
+
+def convert_in_subprocess(pdf_path: str) -> tuple[str, int]:
+    """Run marker conversion in an isolated subprocess.
+    If CUDA assert kills the subprocess, the main process survives."""
+    script = f"""
+import json, sys
+from marker.converters.pdf import PdfConverter
+from marker.models import create_model_dict
+from marker.output import text_from_rendered
+import torch
+
+models = create_model_dict()
+converter = PdfConverter(artifact_dict=models)
+rendered = converter(sys.argv[1])
+text, _, _ = text_from_rendered(rendered)
+pages = len(rendered.metadata.get("page_stats", []))
+print(json.dumps({{"text": text, "pages": pages}}))
+"""
+    fd, script_path = tempfile.mkstemp(suffix=".py")
+    os.write(fd, script.encode())
+    os.close(fd)
+
+    try:
+        result = subprocess.run(
+            [sys.executable, script_path, pdf_path],
+            capture_output=True, text=True, timeout=600
+        )
+        if result.returncode != 0:
+            raise RuntimeError(f"Subprocess failed: {result.stderr}")
+        data = json.loads(result.stdout.strip())
+        return data["text"], data["pages"]
+    finally:
+        os.unlink(script_path)
+```
+
+**Tradeoff**: This reloads models on every call (~10-15s overhead). Only viable as a fallback for problematic PDFs, not as the primary path.
+
+#### Option C: Health Check that Detects Corrupted CUDA
+
+Add a probe endpoint that attempts a trivial CUDA operation:
+
+```python
+@app.get("/health", response_model=HealthResponse)
+async def health():
+    cuda_healthy = False
+    if torch.cuda.is_available():
+        try:
+            # Attempt a trivial GPU operation to verify CUDA context
+            test = torch.tensor([1.0], device="cuda")
+            _ = test + 1
+            del test
+            cuda_healthy = True
+        except RuntimeError:
+            # CUDA context is corrupted
+            cuda_healthy = False
+
+    return HealthResponse(
+        status="ok" if model.is_loaded() and cuda_healthy else "unavailable",
+        model_loaded=model.is_loaded(),
+        gpu_available=cuda_healthy,
+    )
+```
+
+Your Rust client can check this and alert/restart the pod if CUDA goes unhealthy.
+
+#### Debugging: Get Accurate Stack Traces
+
+When investigating which PDF triggers the assert:
+
+```bash
+CUDA_LAUNCH_BLOCKING=1 python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
+```
+
+This forces synchronous CUDA execution so the stack trace points to the actual failing operation, not a random later call. **Never use in production** -- it destroys performance.
+
+---
+
+## 2. CUDA OOM with Multiple Workers
+
+### The Problem
+
+Your current setup: 4 model instances in an asyncio.Queue pool, each running in a ThreadPoolExecutor.
+
+- Idle VRAM per model: ~3.5 GB
+- Peak VRAM per model (large PDF): 6-9 GB
+- RTX 3090 total: 24 GB
+- 4 workers * 6 GB peak = 24 GB = right at the limit
+- 4 workers * 9 GB peak = 36 GB = guaranteed OOM
+
+### Solution 1: Reduce Pool Size to 2-3 Workers
+
+The simplest and most reliable fix. With 3 workers:
+
+```bash
+export MARKER_POOL_SIZE=3  # 3 * 8GB peak = 24GB, tight but workable
+export MARKER_POOL_SIZE=2  # 2 * 9GB peak = 18GB, safe headroom
+```
+
+Throughput impact: 2 workers vs 4 workers is ~50% throughput reduction, but zero OOM crashes means higher *effective* throughput since you never lose progress.
+
+### Solution 2: PYTORCH_CUDA_ALLOC_CONF
+
+```bash
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+```
+
+What this does:
+- PyTorch's default allocator reserves large contiguous blocks upfront
+- `expandable_segments:True` starts with smaller allocations and grows as needed
+- Reduces **fragmentation**, meaning more of the 24GB is actually usable
+- Reported to reduce VRAM usage by 30-37% in some workloads
+
+**Important caveats**:
+- Do NOT combine with `max_split_size_mb` -- there is a [known PyTorch bug](https://github.com/pytorch/pytorch/issues/123548) where using both simultaneously can crash
+- Test on your actual workloads before deploying -- some GPU architectures have issues (H100/A100 reported problems, RTX 3090 should be fine)
+
+Recommended production setting:
+
+```bash
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+```
+
+### Solution 3: Per-Process Memory Fraction
+
+Limit how much VRAM each worker process can claim:
+
+```python
+import torch
+
+# Limit this process to 40% of GPU memory (9.6 GB on 24GB card)
+torch.cuda.set_per_process_memory_fraction(0.40, device=0)
+```
+
+**Caveats**:
+- Only works if using multiple **processes** (gunicorn workers), not threads in a single process
+- Does NOT enforce true VRAM isolation -- it's a check after allocation, not a reservation
+- CUDA context overhead (~300-500MB) is not counted in the fraction
+- If a single conversion needs more than the limit, it OOMs instead of waiting
+
+For your architecture (single process, thread pool executor), this does NOT help because all threads share one CUDA context.
+
+### Solution 4: Explicit Memory Management Between Conversions
+
+Already partially implemented in your `model.py`. Enhance it:
+
+```python
+import gc
+import torch
+
+def _convert_sync(pdf_path: str) -> tuple[str, int]:
+    assert _converter is not None, "Model not loaded"
+    rendered = _converter(pdf_path)
+    text, _, _ = text_from_rendered(rendered)
+    page_count = len(rendered.metadata.get("page_stats", []))
+
+    # Aggressive cleanup after each conversion
+    del rendered
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+    return text, page_count
+```
+
+`torch.cuda.empty_cache()` releases unused cached memory back to the OS/other processes. Combined with `del rendered` and `gc.collect()`, this ensures Python objects holding CUDA tensors are freed before cache cleanup.
+
+### Recommended Combined Approach
+
+```bash
+# In start.sh or environment
+export MARKER_POOL_SIZE=3
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+```
+
+3 workers + expandable segments gives you enough headroom for most PDFs while maintaining good throughput.
+
+For exceptionally large PDFs (400+ pages), consider having your Rust client split them before uploading, or implement a page-limit check server-side.
+
+---
+
+## 3. Marker Bug: 'NoneType' object has no attribute 'input_ids'
+
+### What It Is
+
+This error occurs inside surya's text recognition pipeline when the tokenizer or model returns `None` for certain input segments. The traceback typically looks like:
+
+```
+AttributeError: 'NoneType' object has no attribute 'input_ids'
+```
+
+### Known Causes
+
+1. **Corrupted or unusual page content**: Certain PDF pages produce image crops that the surya recognition model cannot process, returning `None` instead of a valid tokenized result.
+
+2. **Empty or blank pages**: Pages with no detectable text regions can cause the recognition pipeline to pass `None` through to the tokenizer step.
+
+3. **Table recognition edge case**: Marker issue [#827](https://github.com/datalab-to/marker/issues/827) documents a related bug where `row_encoder_hidden_states` is empty during table recognition, causing `torch.stack` to fail on an empty list. This is the same class of bug -- a model returning empty/None results for unusual inputs.
+
+4. **Config initialization bug**: Marker issue [#548](https://github.com/datalab-to/marker/issues/548) shows that `PdfConverter` can hit NoneType errors when config is not properly initialized.
+
+### Workarounds
+
+#### A. Catch and Skip at the Server Level
+
+Your existing try/except in `main.py` already catches this and returns `success=false`. The key is making sure the CUDA context survives (this error is a Python exception, not a CUDA assert, so the context should be fine):
+
+```python
+def _convert_sync(pdf_path: str) -> tuple[str, int]:
+    assert _converter is not None, "Model not loaded"
+    try:
+        rendered = _converter(pdf_path)
+        text, _, _ = text_from_rendered(rendered)
+        page_count = len(rendered.metadata.get("page_stats", []))
+    except (AttributeError, RuntimeError) as e:
+        # Log and return empty result rather than crashing
+        logger.warning(f"Conversion failed for {pdf_path}: {e}")
+        # Clean up GPU state even on failure
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        raise
+    finally:
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+    return text, page_count
+```
+
+#### B. Update marker-pdf
+
+Check your installed version:
+
+```bash
+pip show marker-pdf
+```
+
+Latest as of January 2026 is **1.10.2**. Several NoneType/AttributeError bugs were fixed in versions after 1.7.x. If you're running an older version, upgrading may resolve the issue entirely.
+
+#### C. Pre-validate PDFs
+
+Before sending to marker, check if pypdfium2 can open the PDF and count pages:
+
+```python
+import pypdfium2
+
+def validate_pdf(path: str) -> bool:
+    try:
+        doc = pypdfium2.PdfDocument(path)
+        page_count = len(doc)
+        doc.close()
+        return page_count > 0
+    except Exception:
+        return False
+```
+
+---
+
+## 4. Marker Bug: 'Failed to load document (PDFium: Data format error)'
+
+### What It Is
+
+This error comes from `pypdfium2`, the PDF rendering library marker uses internally. PDFium (Google's PDF engine) cannot parse the file structure.
+
+### Known Causes
+
+1. **Corrupted PDF files**: Truncated downloads, incomplete saves, disk errors
+2. **Non-PDF files with .pdf extension**: Images, HTML, or other formats saved as .pdf
+3. **Encrypted/DRM-protected PDFs**: Password-protected files without providing the password. pypdfium2 supports a `password` parameter, but marker does not expose this
+4. **PDFium thread safety**: **This is critical for your setup.** PDFium is NOT thread-safe. From [pypdfium2#309](https://github.com/pypdfium2-team/pypdfium2/issues/309): "it is not allowed to access pdfium functions simultaneously across different threads. If that is not ensured, then arbitrary issues may arise." Since your model pool uses `ThreadPoolExecutor`, multiple conversions running simultaneously can corrupt PDFium's internal state, causing valid PDFs to appear broken
+5. **Unusual PDF versions or features**: Some PDF 2.0 features or exotic compression methods that PDFium does not support
+
+### Critical Finding: Thread Safety
+
+Your current architecture runs multiple conversions in a `ThreadPoolExecutor` (via `asyncio.loop.run_in_executor`). Since PDFium is not thread-safe, this can cause sporadic "Data format error" on PDFs that are perfectly valid.
+
+**This may be the root cause of intermittent failures that seem random.**
+
+### Workarounds
+
+#### A. Serialize PDFium Access (Quick Fix)
+
+Add a threading lock around the converter call:
+
+```python
+import threading
+
+_convert_lock = threading.Lock()
+
+def _convert_sync(pdf_path: str) -> tuple[str, int]:
+    assert _converter is not None, "Model not loaded"
+    with _convert_lock:
+        rendered = _converter(pdf_path)
+    text, _, _ = text_from_rendered(rendered)
+    page_count = len(rendered.metadata.get("page_stats", []))
+
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+    return text, page_count
+```
+
+**Tradeoff**: Eliminates parallelism entirely. Only one PDF converts at a time. But it eliminates thread-safety crashes.
+
+#### B. Use Process-Based Workers Instead of Threads
+
+Instead of a thread pool, use separate processes. Each process gets its own PDFium instance:
+
+```bash
+# Use gunicorn with multiple worker processes instead of
+# a single uvicorn process with ThreadPoolExecutor
+"$VENV/bin/gunicorn" app.main:app \
+    --worker-class uvicorn.workers.UvicornWorker \
+    --workers 2 \
+    --bind 0.0.0.0:8000 \
+    --max-requests 100 \
+    --max-requests-jitter 20 \
+    --timeout 600
+```
+
+Each gunicorn worker is a separate process with its own PDFium and CUDA context. No thread-safety issues. But each worker loads its own copy of the models (~3.5GB VRAM each).
+
+#### C. Pre-validate and Reject Bad PDFs
+
+```python
+import pypdfium2
+
+async def convert(file: UploadFile = File(...)):
+    # ... save to tmp_path ...
+    try:
+        doc = pypdfium2.PdfDocument(tmp_path)
+        doc.close()
+    except pypdfium2.PdfiumError as e:
+        return ConvertResponse(
+            success=False,
+            error=f"Invalid PDF: {e}"
+        )
+    # proceed with marker conversion
+```
+
+This catches obviously bad files before they reach marker and waste GPU time.
+
+#### D. For Encrypted PDFs Specifically
+
+Detect and reject password-protected PDFs upfront:
+
+```python
+import pypdfium2
+
+def check_pdf_encrypted(path: str) -> bool:
+    try:
+        doc = pypdfium2.PdfDocument(path)
+        doc.close()
+        return False
+    except pypdfium2.PdfiumError as e:
+        if "password" in str(e).lower() or "encryption" in str(e).lower():
+            return True
+        return False  # Different error, not encryption
+```
+
+---
+
+## 5. Best Practices for Marker in Production
+
+### Environment Variables
+
+```bash
+# GPU device control
+export TORCH_DEVICE=cuda            # Force GPU (marker's own env var)
+export CUDA_VISIBLE_DEVICES=0       # Pin to specific GPU
+
+# Memory management
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+
+# Model cache (persistent storage on Runpod)
+export HF_HOME=/workspace/hf_cache
+export TRANSFORMERS_CACHE=/workspace/hf_cache
+
+# Debugging only (never in production)
+# export CUDA_LAUNCH_BLOCKING=1     # Synchronous CUDA for stack traces
+```
+
+### CUDA Settings
+
+```python
+# At server startup, before loading models
+import torch
+
+# Log GPU info
+if torch.cuda.is_available():
+    device = torch.cuda.get_device_name(0)
+    total_vram = torch.cuda.get_device_properties(0).total_mem / 1024**3
+    print(f"GPU: {device}, VRAM: {total_vram:.1f} GB")
+
+# Optional: limit memory fraction per process
+# torch.cuda.set_per_process_memory_fraction(0.45, device=0)
+```
+
+### Memory Management
+
+```python
+import gc
+import torch
+
+def cleanup_gpu():
+    """Call after each conversion to prevent VRAM fragmentation."""
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+
+def log_vram_usage(label: str = ""):
+    """Log current VRAM usage for monitoring."""
+    if torch.cuda.is_available():
+        allocated = torch.cuda.memory_allocated() / 1024**2
+        reserved = torch.cuda.memory_reserved() / 1024**2
+        max_allocated = torch.cuda.max_memory_allocated() / 1024**2
+        print(f"[VRAM {label}] allocated={allocated:.0f}MB "
+              f"reserved={reserved:.0f}MB peak={max_allocated:.0f}MB")
+```
+
+### Error Recovery Hierarchy
+
+Not all errors are equal. Handle them differently:
+
+| Error | CUDA Context | Recovery |
+|-------|-------------|----------|
+| `AttributeError: NoneType` | Intact | Catch, log, return error, continue |
+| `RuntimeError: CUDA out of memory` | Usually intact | `torch.cuda.empty_cache()`, retry with backoff |
+| `RuntimeError: CUDA device-side assert` | **Destroyed** | Process must restart |
+| `pypdfium2.PdfiumError` | Intact | Catch, return error, continue |
+| `SegFault / core dump` | **Destroyed** | Process must restart |
+
+```python
+def _convert_sync(pdf_path: str) -> tuple[str, int]:
+    assert _converter is not None, "Model not loaded"
+    try:
+        rendered = _converter(pdf_path)
+        text, _, _ = text_from_rendered(rendered)
+        page_count = len(rendered.metadata.get("page_stats", []))
+        return text, page_count
+    except torch.cuda.OutOfMemoryError:
+        logger.error(f"CUDA OOM processing {pdf_path}")
+        gc.collect()
+        torch.cuda.empty_cache()
+        raise  # Let caller handle retry
+    except RuntimeError as e:
+        if "device-side assert" in str(e):
+            logger.critical(f"CUDA ASSERT - context destroyed: {e}")
+            # Cannot recover. This process needs to die.
+            # gunicorn --max-requests handles this, or:
+            import os, signal
+            os.kill(os.getpid(), signal.SIGTERM)
+        raise
+    finally:
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+```
+
+### Worker Recycling
+
+Even without crashes, long-running GPU processes accumulate fragmented VRAM and Python object leaks. Periodic worker recycling prevents this:
+
+```bash
+# gunicorn with worker recycling
+"$VENV/bin/gunicorn" app.main:app \
+    --worker-class uvicorn.workers.UvicornWorker \
+    --workers 2 \
+    --max-requests 100 \
+    --max-requests-jitter 20 \
+    --timeout 600 \
+    --bind 0.0.0.0:8000
+```
+
+After every ~100-120 conversions, the worker process is killed and a fresh one spawned. Clean CUDA context, clean memory.
+
+---
+
+## 6. Recommended Server Configuration
+
+### Architecture Decision
+
+**Current**: Single uvicorn process, asyncio.Queue pool, ThreadPoolExecutor.
+
+**Recommended**: Gunicorn with 2 uvicorn workers, single converter per worker, no thread pool.
+
+Rationale:
+- **Solves PDFium thread safety** (each worker is a separate process)
+- **Solves CUDA assert recovery** (gunicorn auto-restarts dead workers)
+- **Solves memory leaks** (--max-requests recycles workers)
+- **VRAM budget**: 2 workers * ~3.5GB idle + ~5GB peak headroom each = ~17GB, within 24GB limit
+
+### Recommended start.sh
+
+```bash
+#!/bin/bash
+set -e
+
+VENV=/workspace/venv
+SERVER=/workspace/pdf2md-server
+export HF_HOME=/workspace/hf_cache
+export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+export TORCH_DEVICE=cuda
+export CUDA_VISIBLE_DEVICES=0
+
+# Cleanup stale processes
+for pid in $(pgrep -f 'gunicorn.*app.main' 2>/dev/null || true); do
+    kill -9 "$pid" 2>/dev/null || true
+done
+sleep 2
+
+# Clear stale bytecode
+rm -rf "$SERVER/app/__pycache__"
+
+# Ensure model cache symlinks
+if [ -d /workspace/datalab_cache ] && [ ! -L /root/.cache/datalab ]; then
+    rm -rf /root/.cache/datalab
+    mkdir -p /root/.cache
+    ln -s /workspace/datalab_cache /root/.cache/datalab
+fi
+
+# Install deps if needed
+if ! "$VENV/bin/pip" show marker-pdf &>/dev/null 2>&1; then
+    echo "Creating virtual environment..."
+    rm -rf "$VENV"
+    python3 -m venv "$VENV"
+    "$VENV/bin/pip" install -r "$SERVER/requirements.txt"
+fi
+
+WORKERS=${MARKER_WORKERS:-2}
+echo "Starting server with $WORKERS gunicorn workers..."
+cd "$SERVER"
+"$VENV/bin/gunicorn" app.main:app \
+    --worker-class uvicorn.workers.UvicornWorker \
+    --workers "$WORKERS" \
+    --bind 0.0.0.0:8000 \
+    --max-requests 100 \
+    --max-requests-jitter 20 \
+    --timeout 600 \
+    --graceful-timeout 30 \
+    --preload
+```
+
+Note: `--preload` loads the app before forking workers. This means models are loaded once and shared via copy-on-write. However, CUDA contexts cannot be shared across forks, so each worker will still initialize its own CUDA context. Test whether `--preload` helps or hurts -- it may cause "Cannot re-initialize CUDA in forked subprocess" errors, in which case remove it.
+
+If `--preload` causes CUDA fork issues:
+
+```bash
+# Without --preload: each worker loads its own models independently
+"$VENV/bin/gunicorn" app.main:app \
+    --worker-class uvicorn.workers.UvicornWorker \
+    --workers "$WORKERS" \
+    --bind 0.0.0.0:8000 \
+    --max-requests 100 \
+    --max-requests-jitter 20 \
+    --timeout 600 \
+    --graceful-timeout 30
+```
+
+### Simplified model.py for Process-Based Workers
+
+With gunicorn, each worker is a separate process. No need for asyncio.Queue pool or ThreadPoolExecutor:
+
+```python
+import asyncio
+import functools
+import gc
+import logging
+from typing import Optional
+
+import torch
+from marker.converters.pdf import PdfConverter
+from marker.models import create_model_dict
+from marker.output import text_from_rendered
+
+logger = logging.getLogger(__name__)
+
+_converter: Optional[PdfConverter] = None
+
+
+def is_loaded() -> bool:
+    return _converter is not None
+
+
+def load_model() -> None:
+    global _converter
+    logger.info("Loading Marker models...")
+    models = create_model_dict()
+    _converter = PdfConverter(artifact_dict=models)
+    vram_mb = torch.cuda.memory_allocated() / 1024 / 1024
+    logger.info(f"Marker models loaded. VRAM used: {vram_mb:.0f} MB")
+
+
+def _convert_sync(pdf_path: str) -> tuple[str, int]:
+    assert _converter is not None, "Model not loaded"
+    try:
+        rendered = _converter(pdf_path)
+        text, _, _ = text_from_rendered(rendered)
+        page_count = len(rendered.metadata.get("page_stats", []))
+        return text, page_count
+    except torch.cuda.OutOfMemoryError:
+        logger.error(f"CUDA OOM processing {pdf_path}")
+        gc.collect()
+        torch.cuda.empty_cache()
+        raise
+    except RuntimeError as e:
+        if "device-side assert" in str(e):
+            logger.critical(f"CUDA context corrupted: {e}")
+            import os, signal
+            os.kill(os.getpid(), signal.SIGTERM)
+        raise
+    finally:
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+
+async def convert(pdf_path: str) -> tuple[str, int]:
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(
+        None, functools.partial(_convert_sync, pdf_path)
+    )
+```
+
+### VRAM Budget Table
+
+| Config | Idle VRAM | Peak VRAM | Headroom | Risk |
+|--------|-----------|-----------|----------|------|
+| 4 workers, no expandable_segments | ~14 GB | ~28 GB | -4 GB | OOM guaranteed on large PDFs |
+| 3 workers, expandable_segments | ~10.5 GB | ~18-21 GB | 3-6 GB | Tight, occasional OOM possible |
+| 2 workers, expandable_segments | ~7 GB | ~12-14 GB | 10-17 GB | Safe, recommended |
+| 1 worker, expandable_segments | ~3.5 GB | ~6-9 GB | 15-20 GB | Very safe, lowest throughput |
+
+---
+
+## Sources
+
+### CUDA Device-Side Assert
+- [PyTorch #44624: CUDA RuntimeError unrecoverably bricks session](https://github.com/pytorch/pytorch/issues/44624)
+- [PyTorch Forum: How to fix CUDA device-side assert](https://discuss.pytorch.org/t/how-to-fix-cuda-error-device-side-assert-triggered-error/137553)
+- [PyTorch Forum: Practical tips for device-side assert](https://discuss.pytorch.org/t/practical-tips-for-runtimeerror-cuda-error-device-side-assert-triggered/157167)
+- [Built In: CUDA Device-Side Assert Solved](https://builtin.com/software-engineering-perspectives/cuda-error-device-side-assert-triggered)
+
+### CUDA Memory Management
+- [PyTorch CUDA Semantics Documentation](https://docs.pytorch.org/docs/stable/notes/cuda.html)
+- [PyTorch Understanding CUDA Memory Usage](https://docs.pytorch.org/docs/stable/torch_cuda_memory.html)
+- [PyTorch #123548: max_split_size_mb + expandable_segments conflict](https://github.com/pytorch/pytorch/issues/123548)
+- [torch.cuda.set_per_process_memory_fraction docs](https://docs.pytorch.org/docs/stable/generated/torch.cuda.memory.set_per_process_memory_fraction.html)
+
+### Marker-PDF Issues
+- [Marker #615: PDFium Data format error](https://github.com/datalab-to/marker/issues/615)
+- [Marker #710: CUDA Out-of-Memory on Linux](https://github.com/datalab-to/marker/issues/710)
+- [Marker #835: Aborted (core dumped) after recognition](https://github.com/datalab-to/marker/issues/835)
+- [Marker #548: NoneType AttributeError](https://github.com/datalab-to/marker/issues/548)
+- [Marker #827: Table processing empty tensor](https://github.com/datalab-to/marker/issues/827)
+
+### PDFium Thread Safety
+- [pypdfium2 #309: Data format error in Celery workers](https://github.com/pypdfium2-team/pypdfium2/issues/309)
+
+### Deployment
+- [marker-api: Deployable API for marker](https://github.com/adithya-s-k/marker-api)
+- [Gunicorn + Uvicorn deployment guide](https://medium.com/@iklobato/mastering-gunicorn-and-uvicorn-the-right-way-to-deploy-fastapi-applications-aaa06849841e)
+- [PyTorch Multiprocessing Best Practices](https://docs.pytorch.org/docs/stable/notes/multiprocessing.html)
