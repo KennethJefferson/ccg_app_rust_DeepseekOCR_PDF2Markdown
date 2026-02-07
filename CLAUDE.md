@@ -32,7 +32,7 @@ cargo run -- --help      # Show CLI usage
 - Workers auto-recycle after ~100 requests (`--max-requests 100 --max-requests-jitter 20`) for VRAM leak prevention
 - PDFs pre-validated with pypdfium2 before GPU processing (catches bad PDFs immediately)
 - `/health` runs CUDA probe (trivial GPU op) to detect silently corrupted contexts
-- `MARKER_WORKERS` env var controls worker count (default 4, recommend 3 for RTX 3090)
+- `MARKER_WORKERS` env var controls worker count (default 3; 4 causes OOM under load on RTX 3090)
 - Client sends MD5 hash of PDF bytes via `X-File-MD5` header; server rejects corrupted uploads
 - Client retries transient errors: CUDA crashes, upload corruption, timeouts (3 attempts, exponential backoff)
 

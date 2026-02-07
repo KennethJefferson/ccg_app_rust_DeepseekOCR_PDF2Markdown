@@ -1,4 +1,3 @@
-import glob
 import hashlib
 import logging
 import os
@@ -23,18 +22,12 @@ def _is_fatal_cuda_error(error: Exception) -> bool:
     return any(kw in msg for kw in FATAL_CUDA_KEYWORDS)
 
 
-def _cleanup_stale_temp_files() -> None:
-    """Remove orphaned marker temp files from previous crashed workers."""
-    for f in glob.glob("/tmp/marker_*.pdf"):
-        try:
-            os.unlink(f)
-        except OSError:
-            pass
-
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    _cleanup_stale_temp_files()
+    # NOTE: Temp file cleanup is handled by start.sh BEFORE workers boot.
+    # Do NOT clean /tmp/marker_*.pdf here — when gunicorn restarts a crashed
+    # worker, the new worker's lifespan would delete temp files that surviving
+    # workers are still using, causing FileNotFoundError.
     model.load_model()
     yield
 

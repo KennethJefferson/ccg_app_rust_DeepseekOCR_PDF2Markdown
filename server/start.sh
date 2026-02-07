@@ -47,7 +47,7 @@ if ! "$VENV/bin/pip" show marker-pdf &>/dev/null 2>&1; then
     "$VENV/bin/pip" install -r "$SERVER/requirements.txt"
 fi
 
-WORKERS=${MARKER_WORKERS:-4}
+WORKERS=${MARKER_WORKERS:-3}
 echo "Starting server with $WORKERS workers (max-requests: 100)..."
 cd "$SERVER"
 "$VENV/bin/gunicorn" app.main:app \
